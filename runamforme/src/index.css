@@ -1,0 +1,140 @@
+/* Import Bootstrap first. This provides the responsive grid system,
+   CSS variables for theme customization, and pre-built component styles. */
+@import "bootstrap/dist/css/bootstrap.min.css";
+
+/* --- Define CSS Variables for your custom theme colors and values ---
+   These variables can be easily overridden to change your site's look globally.
+   Based on a clean, modern aesthetic similar to platforms like freelancer.com. */
+:root {
+  /* Primary Color Palette (Used for primary actions, links, branding)
+     Inspired by a vibrant blue/teal often found in tech/marketplace sites. */
+  --primary-color: #007bff; /* Bootstrap's default primary, can be customized */
+  --primary-dark: #0056b3; /* Darker shade for hover/active states */
+  --primary-light: #66b3ff; /* Lighter shade */
+  --primary-accent: #28a745; /* A secondary accent, like green for 'success' actions */
+
+  /* Neutral Palette (Used for backgrounds, text, borders, spacing) */
+  --gray-extra-light: #f8f9fa; /* Very light gray, good for backgrounds */
+  --gray-light: #e9ecef;     /* Light gray */
+  --gray-medium: #ced4da;    /* Medium gray, good for borders/dividers */
+  --gray-dark: #343a40;      /* Dark gray, good for dark text or backgrounds */
+  --gray-extra-dark: #212529; /* Very dark gray, close to black */
+  --white: #fff;             /* White */
+  --black: #000;             /* Black */
+
+  /* Text Colors - Base colors often linked to neutral palette */
+  --text-color-primary: var(--gray-extra-dark); /* Default body text color */
+  --text-color-secondary: #6c757d; /* Muted text color */
+
+  /* Spacing Variables (Optional, Bootstrap already provides many) */
+  /* --spacing-sm: 8px; */
+  /* --spacing-md: 16px; */
+  /* --spacing-lg: 24px; */
+}
+
+/* --- Apply base styles to body and root elements --- */
+body {
+  /* Set a modern, readable font stack */
+  font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--gray-extra-light); /* Use a CSS variable for background color */
+  color: var(--text-color-primary); /* Use a CSS variable for default text color */
+  line-height: 1.6; /* Improve readability of body text */
+  min-height: 100vh; /* Ensure the body takes at least the full viewport height */
+  display: flex; /* Enable flexbox on body to help push the footer down */
+  flex-direction: column; /* Stack children vertically */
+}
+
+#root {
+  /* Allow the main root element to grow and take up available space */
+  flex-grow: 1;
+  display: flex; /* Enable flexbox on root */
+  flex-direction: column; /* Stack children vertically */
+}
+
+/* --- Styles related to the AppLayout component --- */
+/* Assuming AppLayout is the direct child of #root and has this class */
+.app-container {
+  flex-grow: 1; /* Allow the app container to grow */
+  display: flex; /* Enable flexbox */
+  flex-direction: column; /* Stack NavBar, main, and Footer vertically */
+}
+
+/* Style for the main content wrapper within AppLayout */
+.content-wrap {
+  flex-grow: 1; /* Allow the main content area to grow and push the footer down */
+  /* Add padding to the bottom equal to the footer's height to prevent content from being hidden by the footer */
+  /* You may need to inspect your rendered footer to get its actual height */
+  padding-bottom: 80px; /* Example: Adjust based on actual footer height */
+}
+
+/* Ensure the footer does not shrink and stays at the bottom due to the flexbox layout */
+footer {
+  flex-shrink: 0; /* Prevent the footer from shrinking when content is long */
+  /* margin-top: auto; */ /* This is handled by flex-grow: 1 on .content-wrap */
+}
+
+
+/* --- Optional: Override Bootstrap's default CSS variables ---
+   This is a powerful way to apply your theme colors to Bootstrap components
+   without writing custom CSS rules for every button, alert, etc.
+   Uncomment and adjust these if you want to completely re-theme Bootstrap. */
+/*
+:root {
+    --bs-primary: var(--primary-color);
+    --bs-secondary: var(--gray-dark);
+    --bs-success: var(--primary-accent); // Use your accent color for Bootstrap success
+    --bs-info: var(--primary-light);    // Use a light primary shade for info
+    --bs-warning: #ffc107;              // Example: Keep default warning or define a variable
+    --bs-danger: #dc3545;               // Example: Keep default danger or define a variable
+    --bs-light: var(--gray-light);
+    --bs-dark: var(--gray-dark);
+
+    --bs-body-color: var(--text-color-primary);
+    --bs-body-bg: var(--gray-extra-light);
+
+    --bs-link-color: var(--primary-dark); // Darker primary for default link color
+    --bs-link-hover-color: var(--primary-color); // Primary color on hover
+    --bs-link-decoration: none; // Remove default underline
+
+    --bs-border-color: var(--gray-medium); // Medium gray for borders
+}
+*/
+
+/* --- Custom Styles ---
+   Add any additional custom CSS rules here that are not covered by Bootstrap
+   or are specific overrides. */
+
+/* Example: Subtle hover effect for cards */
+.card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.card:hover {
+    transform: translateY(-3px); /* Slight lift effect on hover */
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1); /* More pronounced shadow on hover */
+}
+
+/* Example: Style for specific page containers if needed */
+/* .errands-feed-container {
+    padding-top: 20px;
+}
+.profile-container {
+    background-color: var(--white);
+    padding: 30px;
+    border-radius: 8px;
+}
+.review-container {
+    max-width: 700px;
+    margin-left: auto;
+    margin-right: auto;
+} */
+
+
+/* Add more responsive adjustments using standard CSS media queries here if needed */
+/* Example:
+@media (max-width: 768px) {
+    .some-class {
+        font-size: smaller;
+    }
+}
+*/
