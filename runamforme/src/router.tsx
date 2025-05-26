@@ -9,7 +9,9 @@ import PostErrand from "./pages/PostErrand";
 import ErrandsFeedPage from "./pages/ErrandsFeedPage";
 import UserProfilePage from "./pages/UserProfilePage";
 import ErrandDetailsPage from "./pages/ErrandDetailsPage";
+import EditProfilePage from './pages/EditProfilePage';
 import NotFoundPage from "./pages/NotFoundPage";
+
 // Auth and layout
 import ProtectedRoute from "./routes/ProtectedRoutes";
 import AppLayout from "./components/AppLayout";
@@ -48,6 +50,14 @@ const router = createBrowserRouter([
         ),
       },
       {
+        path: "edit-profile",
+        element: (
+          <ProtectedRoute>
+            <EditProfilePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
         path: "errands",
         element: <ErrandsFeedPage />,
       },
@@ -56,7 +66,7 @@ const router = createBrowserRouter([
         element: <ErrandDetailsPage />,
       },
       {
-        path: "profile/:uid",
+        path: "profile/:id",
         element: <UserProfilePage />,
       },
       {
@@ -66,5 +76,4 @@ const router = createBrowserRouter([
     ],
   },
 ]);
-
 export default router;

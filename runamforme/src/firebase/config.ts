@@ -2,6 +2,7 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 // Import other Firebase services you might use (e.g., getStorage, getFunctions)
 
 // Your Firebase configuration object.
@@ -23,6 +24,7 @@ const firebaseApp: FirebaseApp = initializeApp(firebaseConfig);
 // Export initialized services directly from here
 export const auth = getAuth(firebaseApp);
 export const db = getFirestore(firebaseApp);
+export const storage = getStorage(firebaseApp);
 // Export other services (storage, functions, etc.) if you initialize them here
 
 // Optional: Export the app instance itself if needed elsewhere (less common now)

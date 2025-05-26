@@ -114,7 +114,7 @@ const Dashboard: React.FC = () => {
             <div>
               <h5 className="mb-1">{errand.description}</h5>
               <p className="mb-1 text-muted">
-                Location: {errand.location} | Duration: {errand.duration} | Fee: ${errand.fee}
+                Location: {errand.location} | Duration: {errand.duration} | Fee: ₦{errand.fee}
               </p>
               <span className={`badge ${getStatusBadgeColor(errand.status)} me-2`}>
                 {errand.status}

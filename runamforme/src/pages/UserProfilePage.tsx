@@ -1,68 +1,86 @@
+// UserProfilePage.tsx
+// ===========================
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { auth } from '../firebase/config';
-import { onAuthStateChanged, type User } from 'firebase/auth';
+import { useAuth } from '../contexts/AuthContext';
+import { type UserProfile, type Errand } from '../types';
 import UsersErrandFeed from '../components/UsersErrandFeed';
 
-type UserProfile = {
-  uid: string;
-  name: string;
-  username: string;
-  email: string;
-  bio?: string;
-  avatarUrl?: string;
-  userType?: string;
-  followersCount?: number;
-  followingCount?: number;
-  likesCount?: number;
-  createdAt?: any;
-  followers?: string[];
-};
-
 const UserProfilePage: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { username } = useParams<{ username: string }>();
+  const { currentUser, loading: authLoading } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [errands, setErrands] = useState<Errand[]>([]);
+  const [likedErrands, setLikedErrands] = useState<Errand[]>([]);
   const [loading, setLoading] = useState(true);
-  const [authLoading, setAuthLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [notFound, setNotFound] = useState(false);
-  const [isFollowing, setIsFollowing] = useState(false);
-  const [followActionLoading, setFollowActionLoading] = useState(false);
+  const [tab, setTab] = useState<'posted' | 'liked'>('posted');
+  
 
-  // Auth state tracking
+  
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      setAuthLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  // Fetch profile
-  useEffect(() => {
-    const fetchProfile = async () => {
-      if (!id) return;
+    const fetchProfileAndErrands = async () => {
+      if (!username) return;
 
       try {
         setLoading(true);
-        const profileRef = doc(db, 'users', id);
-        const profileSnap = await getDoc(profileRef);
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('username', '==', username));
+        const snapshot = await getDocs(q);
 
-        if (!profileSnap.exists()) {
-          setNotFound(true);
+        if (snapshot.empty) {
+          setError('User not found.');
           return;
         }
 
-        const profileData = profileSnap.data() as UserProfile;
-        setProfile(profileData);
+        const userDoc = snapshot.docs[0];
+        const userData = userDoc.data() as UserProfile;
+        const userId = userDoc.id;
 
-        // Check if current user is following
-        if (currentUser && profileData.followers?.includes(currentUser.uid)) {
-          setIsFollowing(true);
+        const completeProfile: UserProfile = {
+          id: userId,
+          uid: userId,
+          name: userData.name,
+          username: userData.username,
+          email: userData.email,
+          userType: userData.userType,
+          createdAt: userData.createdAt,
+          followersCount: userData.followersCount ?? 0,
+          followingCount: userData.followingCount ?? 0,
+          likes: userData.likes ?? 0,
+          bio: userData.bio ?? '',
+          avatarUrl: userData.avatarUrl ?? '',
+          isVerified: userData.isVerified ?? false,
+        };
+
+        setProfile(completeProfile);
+
+        const errandsQuery = query(collection(db, 'errands'), where('uid', '==', userId));
+        const errandsSnapshot = await getDocs(errandsQuery);
+        const userErrands: Errand[] = errandsSnapshot.docs.map((doc) => {
+          const { id, ...data } = doc.data() as Errand & { id?: string };
+          return {
+            id: doc.id,
+            ...data,
+            postedByUsername: doc.data().postedByUsername ?? username,
+          };
+        });
+
+        setErrands(userErrands);
+
+        if (currentUser?.uid === userId) {
+          const likedQuery = query(collection(db, 'errands'), where('likedBy', 'array-contains', userId));
+          const likedSnapshot = await getDocs(likedQuery);
+          const liked: Errand[] = likedSnapshot.docs.map((doc) => {
+            const { id, ...data } = doc.data() as Errand & { id?: string };
+            return {
+              id: doc.id,
+              ...data,
+            };
+          });
+          setLikedErrands(liked);
         }
       } catch (err) {
         console.error(err);
@@ -73,72 +91,39 @@ const UserProfilePage: React.FC = () => {
     };
 
     if (!authLoading) {
-      fetchProfile();
+      fetchProfileAndErrands();
     }
-  }, [id, authLoading, currentUser]);
+  }, [username, authLoading, currentUser]);
 
-  const handleFollowToggle = async () => {
-    if (!currentUser || !profile) return;
-
-    try {
-      setFollowActionLoading(true);
-      // Simulated logic for follow/unfollow
-      if (isFollowing) {
-        setIsFollowing(false);
-      } else {
-        setIsFollowing(true);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setFollowActionLoading(false);
-    }
-  };
-
-  // Loading state
   if (authLoading || loading) {
     return (
-      <div className="container my-5">
-        <div className="alert alert-info text-center">
-          <span className="spinner-border spinner-border-sm me-2" role="status" />
-          {authLoading ? 'Loading user session...' : 'Loading profile...'}
+      <div className="container my-5 text-center">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Loading...</span>
         </div>
       </div>
     );
   }
 
-  // Error or not found
   if (error) {
-    return (
-      <div className="container my-5">
-        <div className="alert alert-danger text-center">{error}</div>
-      </div>
-    );
+    return <div className="container my-5 alert alert-danger text-center">{error}</div>;
   }
 
-  if (notFound) {
-    return (
-      <div className="container my-5">
-        <div className="alert alert-warning text-center">User profile not found.</div>
-      </div>
-    );
-  }
+  if (!profile) return null;
 
-  const isOwnProfile = currentUser && profile && currentUser.uid === profile.uid;
+  const isOwnProfile = currentUser?.uid === profile.uid;
 
   return (
-    <div className="container my-5 profile-container">
-      <div className="card shadow-sm p-4 p-md-5">
+    <div className="container my-5">
+      <div className="card shadow-sm p-4 p-md-5 mb-4">
         <div className="row align-items-center">
           <div className="col-md-3 text-center mb-3 mb-md-0">
             <img
               src={
-                profile?.avatarUrl ||
-                (profile?.email
-                  ? `https://www.gravatar.com/avatar/${btoa(profile.email.trim().toLowerCase())}?d=mp&s=150`
-                  : `https://www.gravatar.com/avatar/?d=mp&s=150`)
+                profile.avatarUrl ||
+                `https://www.gravatar.com/avatar/${btoa(profile.email.trim().toLowerCase())}?d=mp&s=150`
               }
-              alt={`${profile?.username || 'User'}'s avatar`}
+              alt={`${profile.username}'s avatar`}
               className="rounded-circle img-fluid"
               style={{ width: '150px', height: '150px', objectFit: 'cover' }}
               onError={(e) => {
@@ -149,63 +134,45 @@ const UserProfilePage: React.FC = () => {
             />
           </div>
           <div className="col-md-9">
-            <h3 className="mb-2">{profile?.name}</h3>
-            <h4 className="text-primary mb-3">@{profile?.username}</h4>
-            {profile?.bio && <p className="text-muted mb-3">{profile.bio}</p>}
-            <p className="mb-2">
-              <strong>Role:</strong>{' '}
-              {profile?.userType
-                ? profile.userType.charAt(0).toUpperCase() + profile.userType.slice(1)
-                : 'Not specified'}
-            </p>
+            <h3 className="mb-2">{profile.name}</h3>
+            <h4 className="text-primary mb-3">@{profile.username}</h4>
+            {profile.bio && <p className="text-muted mb-3">{profile.bio}</p>}
+            <p><strong>Role:</strong> {profile.userType}</p>
             <div className="d-flex flex-wrap gap-3 mb-3">
-              <span className="badge bg-secondary fs-6">
-                Followers: {profile?.followersCount ?? 0}
-              </span>
-              <span className="badge bg-secondary fs-6">
-                Following: {profile?.followingCount ?? 0}
-              </span>
-              <span className="badge bg-success fs-6">
-                Likes: {profile?.likesCount ?? 0}
-              </span>
+              <span className="badge bg-secondary fs-6">Followers: {profile.followersCount}</span>
+              <span className="badge bg-secondary fs-6">Following: {profile.followingCount}</span>
+              <span className="badge bg-success fs-6">Likes: {profile.likes}</span>
             </div>
-
-            {!authLoading && currentUser && profile && !isOwnProfile && (
-              <div className="mt-3">
-                <button
-                  className={`btn ${isFollowing ? 'btn-outline-secondary' : 'btn-primary'}`}
-                  onClick={handleFollowToggle}
-                  disabled={followActionLoading}
-                >
-                  {followActionLoading && (
-                    <span
-                      className="spinner-border spinner-border-sm me-2"
-                      role="status"
-                      aria-hidden="true"
-                    />
-                  )}
-                  {followActionLoading ? '' : isFollowing ? 'Following' : 'Follow'}
-                </button>
-              </div>
-            )}
-
-            {!authLoading && currentUser && profile && isOwnProfile && (
-              <div className="mt-3">
-                <button className="btn btn-outline-secondary">Edit Profile</button>
-              </div>
-            )}
-
-            {profile?.createdAt && typeof profile.createdAt !== 'string' && (
-              <p className="text-muted small mt-3 mb-0">
-                Joined: {new Date(profile.createdAt.toDate()).toLocaleDateString()}
-              </p>
+            {profile.createdAt && (
+              <p className="text-muted small">Joined: {new Date(profile.createdAt.toDate()).toLocaleDateString()}</p>
             )}
           </div>
         </div>
       </div>
 
-      {/* User's errands list */}
-      {profile?.uid && <UsersErrandFeed />}
+      <ul className="nav nav-tabs mb-4">
+        <li className="nav-item">
+          <button className={`nav-link ${tab === 'posted' ? 'active' : ''}`} onClick={() => setTab('posted')}>
+            Posted Errands
+          </button>
+        </li>
+        {isOwnProfile && (
+          <li className="nav-item">
+            <button className={`nav-link ${tab === 'liked' ? 'active' : ''}`} onClick={() => setTab('liked')}>
+              Liked Errands
+            </button>
+          </li>
+        )}
+      </ul>
+
+      {tab === 'posted' ? (
+  <UsersErrandFeed errands={errands} />
+) : (
+  <UsersErrandFeed errands={likedErrands} />
+)}
+
+
+      
     </div>
   );
 };

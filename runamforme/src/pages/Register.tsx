@@ -105,7 +105,7 @@ const Register: React.FC = () => {
         createdAt: serverTimestamp(), // Use serverTimestamp for creation time (FieldValue type)
         followersCount: 0, // Initialize counters to 0 (number type, which is allowed by FieldValue union)
         followingCount: 0,
-        likesCount: 0,
+        likes: 0,
         // Add other optional profile fields here initialized to default values or undefined
         bio: '', // Example: Initialize bio as an empty string
         // avatarUrl: undefined, // Example: leave undefined initially

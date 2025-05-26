@@ -2,6 +2,7 @@
 
 // Import Timestamp and FieldValue types from Firebase Firestore
 import type { Timestamp, FieldValue } from "firebase/firestore";
+import type { ReactNode } from "react";
 
 /**
  * Interface for an Errand document in Firestore.
@@ -10,8 +11,10 @@ import type { Timestamp, FieldValue } from "firebase/firestore";
  * When reading data back, these fields will be Timestamp.
  */
 export interface Errand {
+  title: ReactNode;
   id: string; // Firestore Document ID (added when reading)
   uid: string; // User ID of the poster
+  postedByUsername?: string; // Added: Poster’s username for display
   description: string;
   location: string;
   duration: string;
@@ -26,7 +29,8 @@ export interface Errand {
 
   viewCount?: number;
   clickCount?: number;
-  likesCount?: number;
+  likes?: number;
+  mediaUrls?: string[]; // NEW: array of uploaded image/video URLs
 }
 
 /**
@@ -60,7 +64,7 @@ export interface UserProfile {
 
   followersCount: number;
   followingCount: number;
-  likesCount: number;
+  likes: number;
 
   bio?: string;
   avatarUrl?: string;
@@ -72,13 +76,13 @@ export interface UserProfile {
  */
 export interface UserProfileWriteData extends Omit<
   UserProfile,
-  'id' | 'createdAt' | 'followersCount' | 'followingCount' | 'likesCount'
+  'id' | 'createdAt' | 'followersCount' | 'followingCount' | 'likes'
 > {
   uid: string;
   createdAt: Timestamp | FieldValue;
   followersCount: number | FieldValue;
   followingCount: number | FieldValue;
-  likesCount: number | FieldValue;
+  likes: number | FieldValue;
 }
 
 // ---------------------------------------------

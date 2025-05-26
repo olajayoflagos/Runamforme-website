@@ -1,194 +1,88 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { onSnapshot, collection, query, where, orderBy, doc, runTransaction } from 'firebase/firestore';
-import { db } from "../firebase/config";
-import { useAuth } from '../contexts/AuthContext';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  collection,
+  onSnapshot,
+  query,
+  where,
+  doc,
+  updateDoc,
+  increment
+} from 'firebase/firestore';
+import { db } from '../firebase/config';
 import ErrandCard from '../components/ErrandCard';
+import type { Errand } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 
-const ErrandsFeedPage: React.FC = () => {
-  const { currentUser, loading: authLoading } = useAuth();
-  const [errands, setErrands] = useState<any[]>([]);
+const ErrandsFeedPage = () => {
+  const [errands, setErrands] = useState<Errand[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [filterLocation, setFilterLocation] = useState('');
-  const [filterDuration, setFilterDuration] = useState('');
-  const [filterMinFee, setFilterMinFee] = useState('');
-  const [filterMaxFee, setFilterMaxFee] = useState('');
-  const [userLikedErrandIds, setUserLikedErrandIds] = useState<Set<string>>(new Set());
-  const [checkingLikes, setCheckingLikes] = useState(true);
-  const [likingErrandId, setLikingErrandId] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const { currentUser } = useAuth();
 
-  useEffect(() => {
-    setLoading(true);
-    const errandsRef = collection(db, 'errands');
-    const q = query(errandsRef, where('status', '==', 'open'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedErrands = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setErrands(fetchedErrands);
-      setLoading(false);
-    }, (err) => {
-      console.error('Error fetching errands:', err);
-      setError('Failed to load errands. Please try again later.');
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
+ useEffect(() => {
+  const q = query(collection(db, 'errands'), where('status', '==', 'open'));
+  const unsubscribe = onSnapshot(q, (snapshot) => {
+    const updatedErrands: Errand[] = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data()
+    })) as Errand[];
+    setErrands(updatedErrands);
+    setLoading(false);
+  }, (error) => {
+    console.error('Real-time update error:', error);
+    setLoading(false);
+  });
 
-  useEffect(() => {
-    if (!currentUser) {
-      setUserLikedErrandIds(new Set());
-      setCheckingLikes(false);
-      return;
-    }
-    setCheckingLikes(true);
-    const userLikesRef = collection(db, 'users', currentUser.uid, 'likedErrands');
-    const unsubscribe = onSnapshot(userLikesRef, (snapshot) => {
-      const likedIds = new Set(snapshot.docs.map(doc => doc.id));
-      setUserLikedErrandIds(likedIds);
-      setCheckingLikes(false);
-    }, (err) => {
-      console.error('Error checking liked errands:', err);
-      setCheckingLikes(false);
-    });
-    return () => unsubscribe();
-  }, [currentUser]);
+  return () => unsubscribe(); // Cleanup listener on unmount
+}, []);
 
-  const allOpenErrands = useMemo(() => {
-    return errands.filter((errand) => {
-      const locationMatch = filterLocation ? errand.location === filterLocation : true;
-      const durationMatch = filterDuration ? errand.duration === filterDuration : true;
-      const fee = parseFloat(errand.fee);
-      const minMatch = filterMinFee ? fee >= parseFloat(filterMinFee) : true;
-      const maxMatch = filterMaxFee ? fee <= parseFloat(filterMaxFee) : true;
-      return locationMatch && durationMatch && minMatch && maxMatch;
-    });
-  }, [errands, filterLocation, filterDuration, filterMinFee, filterMaxFee]);
-
-  const handleLikeToggle = async (errandId: string) => {
-    if (!currentUser || likingErrandId) return;
-    setLikingErrandId(errandId);
+  const handleLikeToggle = async (errandId: string, isCurrentlyLiked: boolean) => {
     try {
       const errandRef = doc(db, 'errands', errandId);
-      const userLikeRef = doc(db, 'users', currentUser.uid, 'likedErrands', errandId);
-      await runTransaction(db, async (transaction) => {
-        const errandDoc = await transaction.get(errandRef);
-        if (!errandDoc.exists()) throw new Error('Errand does not exist');
-        const liked = userLikedErrandIds.has(errandId);
-        const newLikeCount = (errandDoc.data().likes || 0) + (liked ? -1 : 1);
-        transaction.update(errandRef, { likes: newLikeCount });
-        liked ? transaction.delete(userLikeRef) : transaction.set(userLikeRef, { likedAt: new Date() });
+      await updateDoc(errandRef, {
+        likes: increment(isCurrentlyLiked ? -1 : 1)
       });
-    } catch (err) {
-      console.error('Error toggling like:', err);
-    } finally {
-      setLikingErrandId(null);
+    } catch (error) {
+      console.error('Failed to update likes:', error);
     }
   };
 
-  if (authLoading || loading || checkingLikes) {
-    return (
-      <div className="container my-5 errands-feed-container">
-        <div className="alert alert-info text-center d-flex align-items-center justify-content-center">
-          <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-          {authLoading ? 'Loading user session...' : (checkingLikes ? 'Checking your likes...' : 'Loading available errands...')}
-        </div>
-      </div>
-    );
-  }
+  const handleViewAndAccept = async (errand: Errand) => {
+    try {
+      const errandRef = doc(db, 'errands', errand.id);
+      await updateDoc(errandRef, {
+        clickCount: increment(1)
+      });
 
-  if (error) {
-    return (
-      <div className="container my-5 errands-feed-container">
-        <div className="alert alert-danger text-center" role="alert">{error}</div>
-      </div>
-    );
-  }
+      if (currentUser?.uid && errand.uid) {
+        const otherUserId = errand.uid === currentUser.uid ? errand.runnerUid : errand.uid;
+        if (otherUserId) {
+          navigate(`/messages/${otherUserId}`);
+        } else {
+          console.warn('Cannot navigate to DM: missing other user UID.');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update clickCount:', error);
+    }
+  };
 
   return (
-    <div className="container my-5 errands-feed-container">
-      <h3 className="mb-4 text-center">Available Errands</h3>
-
-      <div className="card shadow-sm p-3 mb-4">
-        <h5 className="mb-3">Filter Errands</h5>
-        <div className="row g-3">
-          <div className="col-md-6 col-lg-3">
-            <label htmlFor="filterLocation" className="form-label visually-hidden">Filter by Location</label>
-            <input
-              type="text"
-              className="form-control"
-              id="filterLocation"
-              placeholder="Filter by Location (Exact)"
-              value={filterLocation}
-              onChange={(e) => setFilterLocation(e.target.value)}
-              disabled={loading}
-            />
-          </div>
-          <div className="col-md-6 col-lg-3">
-            <label htmlFor="filterDuration" className="form-label visually-hidden">Filter by Duration</label>
-            <input
-              type="text"
-              className="form-control"
-              id="filterDuration"
-              placeholder="Filter by Duration (Exact)"
-              value={filterDuration}
-              onChange={(e) => setFilterDuration(e.target.value)}
-              disabled={loading}
-            />
-          </div>
-          <div className="col-md-6 col-lg-3">
-            <label htmlFor="filterMinFee" className="form-label visually-hidden">Minimum Fee</label>
-            <input
-              type="number"
-              className="form-control"
-              id="filterMinFee"
-              placeholder="Min Fee (₦)"
-              value={filterMinFee}
-              onChange={(e) => setFilterMinFee(e.target.value)}
-              min="0"
-              step="any"
-              disabled={loading}
-            />
-          </div>
-          <div className="col-md-6 col-lg-3">
-            <label htmlFor="filterMaxFee" className="form-label visually-hidden">Maximum Fee</label>
-            <input
-              type="number"
-              className="form-control"
-              id="filterMaxFee"
-              placeholder="Max Fee (₦)"
-              value={filterMaxFee}
-              onChange={(e) => setFilterMaxFee(e.target.value)}
-              min="0"
-              step="any"
-              disabled={loading}
-            />
-          </div>
-        </div>
-        {(filterLocation || filterMinFee || filterMaxFee || filterDuration) && (
-          <button className="btn btn-outline-secondary btn-sm mt-3" onClick={() => {
-            setFilterLocation('');
-            setFilterMinFee('');
-            setFilterMaxFee('');
-            setFilterDuration('');
-          }}>Clear Filters</button>
-        )}
-      </div>
-
-      {allOpenErrands.length === 0 ? (
-        <div className="alert alert-info mt-3 text-center">
-          {filterLocation || filterMinFee || filterMaxFee || filterDuration ?
-            "No errands found matching your filter criteria." :
-            "No open errands found at the moment. Check back later!"
-          }
-        </div>
+    <div className="container mt-4">
+      <h2 className="mb-4">Open Errands</h2>
+      {loading ? (
+        <p>Loading errands...</p>
       ) : (
-        <div className="row">
-          {allOpenErrands.map(errand => (
-            <div key={errand.id} className="col-sm-6 col-md-4 col-lg-3 mb-4">
+        <div className="row row-cols-1 row-cols-md-2 g-4">
+          {errands.map((errand) => (
+            <div className="col" key={errand.id}>
               <ErrandCard
                 errand={errand}
                 onLikeToggle={handleLikeToggle}
-                isLiked={userLikedErrandIds.has(errand.id)}
-                isLiking={likingErrandId === errand.id}
+                isLiked={false}
+                isLiking={false}
+                onViewAndAccept={() => handleViewAndAccept(errand)}
               />
             </div>
           ))}

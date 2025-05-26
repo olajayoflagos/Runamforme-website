@@ -1,4 +1,6 @@
 import React from 'react';
+import type { Timestamp } from 'firebase/firestore';
+import md5 from 'blueimp-md5'; // Install via: npm install blueimp-md5
 
 interface UserProfileHeaderProps {
   avatarUrl?: string;
@@ -7,7 +9,7 @@ interface UserProfileHeaderProps {
   username?: string;
   bio?: string;
   userType?: string;
-  createdAt?: any;
+  createdAt?: Timestamp | string;
 }
 
 const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
@@ -20,7 +22,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   createdAt,
 }) => {
   const fallbackAvatar = email
-    ? `https://www.gravatar.com/avatar/${btoa(email.trim().toLowerCase())}?d=mp&s=150`
+    ? `https://www.gravatar.com/avatar/${md5(email.trim().toLowerCase())}?d=mp&s=150`
     : 'https://www.gravatar.com/avatar/?d=mp&s=150';
 
   return (
@@ -39,14 +41,20 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
         />
       </div>
       <div className="col-md-9">
-        <h3 className="mb-2">{name}</h3>
-        <h4 className="text-primary mb-3">@{username}</h4>
+        <h3 className="mb-2">{name || 'Unnamed User'}</h3>
+        <h4 className="text-primary mb-3">@{username || 'unknown'}</h4>
         {bio && <p className="text-muted mb-3">{bio}</p>}
         <p className="mb-2">
-          <strong>Role:</strong> {userType ? userType.charAt(0).toUpperCase() + userType.slice(1) : 'Not specified'}
+          <strong>Role:</strong>{' '}
+          {userType ? userType.charAt(0).toUpperCase() + userType.slice(1) : 'Not specified'}
         </p>
-        {createdAt && typeof createdAt !== 'string' && (
-          <p className="text-muted small mt-3 mb-0">Joined: {new Date(createdAt.toDate()).toLocaleDateString()}</p>
+        {createdAt && (
+          <p className="text-muted small mt-3 mb-0">
+            Joined:{' '}
+            {typeof createdAt === 'string'
+              ? new Date(createdAt).toLocaleDateString()
+              : createdAt.toDate().toLocaleDateString()}
+          </p>
         )}
       </div>
     </div>
