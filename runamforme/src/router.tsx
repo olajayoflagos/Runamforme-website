@@ -1,5 +1,7 @@
-// router.tsx
+// src/router.tsx
+
 import { createBrowserRouter } from "react-router-dom";
+
 // Main page components
 import Home from "./pages/Home";
 import Login from "./pages/Login";
@@ -11,8 +13,10 @@ import UserProfilePage from "./pages/UserProfilePage";
 import ErrandDetailsPage from "./pages/ErrandDetailsPage";
 import EditProfilePage from './pages/EditProfilePage';
 import NotFoundPage from "./pages/NotFoundPage";
+// NEW: Import MessagesPage
+import MessagesPage from "./pages/MessagesPage";
 
-// Auth and layout
+// Auth and layout components
 import ProtectedRoute from "./routes/ProtectedRoutes";
 import AppLayout from "./components/AppLayout";
 
@@ -27,12 +31,17 @@ const router = createBrowserRouter([
       },
       {
         path: "login",
+      // --- Continued in Part 2 ---
+// src/router.tsx
+// --- Continued from Part 1 ---
+
         element: <Login />,
       },
       {
         path: "register",
         element: <Register />,
       },
+      // Protected Routes
       {
         path: "dashboard",
         element: (
@@ -49,6 +58,10 @@ const router = createBrowserRouter([
           </ProtectedRoute>
         ),
       },
+    // --- Continued in Part 3 ---
+// src/router.tsx
+// --- Continued from Part 2 ---
+
       {
         path: "edit-profile",
         element: (
@@ -57,18 +70,33 @@ const router = createBrowserRouter([
           </ProtectedRoute>
         ),
       },
+      // Public Routes
       {
         path: "errands",
         element: <ErrandsFeedPage />,
       },
       {
-        path: "errands/:id",
+        path: "errands/:id", // Errand ID
         element: <ErrandDetailsPage />,
       },
       {
-        path: "profile/:id",
+        path: "profile/:id", // User UID
         element: <UserProfilePage />,
       },
+      // NEW: Messages Route
+      {
+          path: "messages/:userId", // User UID to message
+          element: (
+             <ProtectedRoute>
+                 <MessagesPage />
+             </ProtectedRoute>
+          ),
+      },
+    // --- Continued in Part 4 ---
+// src/router.tsx
+// --- Continued from Part 3 ---
+
+      // Catch-all 404 route
       {
         path: "*",
         element: <NotFoundPage />,
@@ -76,4 +104,5 @@ const router = createBrowserRouter([
     ],
   },
 ]);
+
 export default router;

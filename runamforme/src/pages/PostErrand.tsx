@@ -1,292 +1,267 @@
-// src/pages/PostErrand.tsx
-import React, { useState, useEffect, type FormEvent, useRef, type ChangeEvent } from "react";
-import { collection, addDoc, serverTimestamp, type FieldValue } from "firebase/firestore";
-import { db } from "../firebase/config";
-import { useAuth } from "../contexts/AuthContext";
-import { useNavigate } from "react-router-dom";
-import type { Errand } from "../types";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "../firebase/config";
+// src/pages/UserProfilePage.tsx
 
-type ErrandWriteData = Omit<Errand, 'id' | 'createdAt'> & { createdAt: FieldValue };
+import React, { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  doc,
+  getDoc,
+  // Corrected import: Import Timestamp directly from firebase/firestore
+  type Timestamp,
+} from 'firebase/firestore';
+import { db } from '../firebase/config';
+import { useAuth } from '../contexts/AuthContext';
+// Import UserProfile and Errand types from your types file
+import type { UserProfile, Errand } from '../types';
+import UsersErrandFeed from '../components/UsersErrandFeed';
 
-const PostErrand: React.FC = () => {
+const UserProfilePage: React.FC = () => {
+  // Get user ID (UID) from the URL parameter named 'id'
+  const { id: userIdFromUrl } = useParams<{ id: string }>();
+
+  // Get current user and auth loading state
   const { currentUser, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
 
-  const [description, setDescription] = useState("");
-  const [location, setLocation] = useState("");
-  const [duration, setDuration] = useState("");
-  const [fee, setFee] = useState("");
-  const [mediaFiles, setMediaFiles] = useState<File[]>([]);
-  const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
-  const [geoStatus, setGeoStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'denied'>('idle');
-  const [geoMessage, setGeoMessage] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitSuccess, setSubmitSuccess] = useState(false);
+  // State for profile data, posted errands, and liked errands
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [errands, setErrands] = useState<Errand[]>([]);
+  const [likedErrands, setLikedErrands] = useState<Errand[]>([]);
 
-  const geoAutoFilledRef = useRef(false);
-  const geoAttemptInProgress = useRef(false);
+  // State for UI loading and errors
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const getGeolocation = () => {
-    if (!navigator.geolocation) {
-      setGeoStatus('error');
-      setGeoMessage("Geolocation is not supported by your browser.");
-      return;
-    }
+  // State for managing tabs (Posted/Liked)
+  const [tab, setTab] = useState<'posted' | 'liked'>('posted');
 
-    if (geoAttemptInProgress.current) return;
-
-    geoAttemptInProgress.current = true;
-    setGeoStatus('loading');
-    setGeoMessage("Attempting to get your current location...");
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setGeo({ lat: position.coords.latitude, lng: position.coords.longitude });
-        setGeoStatus('success');
-        setGeoMessage("Location automatically detected.");
-        setLocation("Your current location (auto-detected)");
-        geoAutoFilledRef.current = true;
-        geoAttemptInProgress.current = false;
-      },
-      (error) => {
-        console.error("Geolocation error:", error);
-        setGeo(null);
-        geoAutoFilledRef.current = false;
-        geoAttemptInProgress.current = false;
-        if (error.code === error.PERMISSION_DENIED) {
-          setGeoStatus('denied');
-          setGeoMessage("Geolocation permission denied. Enter location manually.");
-        } else {
-          setGeoStatus('error');
-          setGeoMessage("Could not get location.");
-        }
-      },
-      { timeout: 10000 }
-    );
-  };
-
+  // Effect to fetch profile and errands
   useEffect(() => {
-    getGeolocation();
-  }, []);
+    const fetchProfileAndErrands = async (userId: string) => {
+      if (!userId) {
+         setLoading(false);
+         setError('User ID not provided in URL.');
+         return;
+      }
 
-  const validateForm = () => {
-    if (!description.trim()) return "Description is required.";
-    if (!location.trim()) return "Location is required.";
-    if (!duration.trim()) return "Duration is required.";
-    if (isNaN(parseFloat(fee)) || parseFloat(fee) <= 0) return "Fee must be a positive number.";
-    if (mediaFiles.length > 4) return "You can upload up to 4 files only.";
-    return null;
-  };
+      try {
+        setLoading(true);
+        setError(null);
+        setProfile(null); // Clear states on new fetch
+        setErrands([]);
+        setLikedErrands([]);
 
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return;
-    const files = Array.from(e.target.files);
-    if (files.length > 4) {
-      setSubmitError("You can upload up to 4 files.");
-      return;
+        // Fetch User Profile by UID (efficient)
+        const userDocRef = doc(db, 'users', userId);
+        const userDocSnap = await getDoc(userDocRef);
+
+        if (!userDocSnap.exists()) {
+          setError('User not found.');
+          setLoading(false);
+          return;
+        }
+
+        // Corrected type assertion to Omit<UserProfile, 'id'>
+        const userData = userDocSnap.data() as Omit<UserProfile, 'id'>;
+        const profileId = userDocSnap.id;
+
+        // Construct complete profile object with defaults
+        const completeProfile: UserProfile = {
+          id: profileId, // Explicitly use the document ID
+          uid: profileId, // UID should also be the document ID in your schema
+          name: userData.name,
+          username: userData.username,
+          email: userData.email, // Check security rules if public
+          userType: userData.userType,
+          createdAt: userData.createdAt,
+          followersCount: userData.followersCount ?? 0,
+          followingCount: userData.followingCount ?? 0,
+          likes: userData.likes ?? 0, // Profile likes?
+          bio: userData.bio ?? '',
+          avatarUrl: userData.avatarUrl ?? '',
+          isVerified: userData.isVerified ?? false,
+        };
+
+        setProfile(completeProfile);
+
+        // Fetch Errands Posted by this User
+        const errandsQuery = query(collection(db, 'errands'), where('uid', '==', userId));
+        const errandsSnapshot = await getDocs(errandsQuery);
+      // --- Continued in Part 2 ---
+// src/pages/UserProfilePage.tsx
+// --- Continued from Part 1 ---
+
+        const userErrands: Errand[] = errandsSnapshot.docs.map((doc) => {
+          // Corrected type assertion to Omit<Errand, 'id'> to avoid TypeScript warning 2783
+          const data = doc.data() as Omit<Errand, 'id'>; // Cast document data to Errand type excluding 'id'
+          return {
+            id: doc.id, // Include the document ID
+            ...data, // Spread existing data
+            // Provide defaults for potentially missing fields and new fields
+            title: data.title ?? 'Untitled Errand',
+            description: data.description ?? '',
+            location: data.location ?? '',
+            duration: data.duration ?? '',
+            fee: data.fee ?? null,
+            status: data.status ?? 'open',
+            uid: data.uid,
+            category: data.category ?? 'uncategorized', // New field
+            currency: data.currency ?? 'NGN', // New field
+            likedByUids: data.likedByUids ?? [], // New array field, default to empty array
+            viewedByUids: data.viewedByUids ?? [], // New array field, default to empty array
+            mediaUrls: data.mediaUrls ?? [], // Existing array field, default to empty array
+          };
+        });
+
+        setErrands(userErrands); // Update state with posted errands
+
+        // --- Fetch Errands Liked by this User (Only if viewing their own profile) ---
+        // Check if the currently logged-in user's UID matches the profile's UID from the URL.
+        const isOwnProfile = currentUser?.uid === userId;
+
+        if (isOwnProfile) {
+          // Query errands where the 'likedByUids' array field contains the current user's UID.
+          // This requires a 'likedByUids' field with an index.
+          const likedQuery = query(collection(db, 'errands'), where('likedByUids', 'array-contains', userId));
+          // Execute the query to get the liked errands.
+          const likedSnapshot = await getDocs(likedQuery);
+          // Map the liked errand documents to an array of Errand objects.
+          const liked: Errand[] = likedSnapshot.docs.map((doc) => {
+             // Corrected type assertion to Omit<Errand, 'id'> to avoid TypeScript warning 2783
+            const data = doc.data() as Omit<Errand, 'id'>; // Cast document data to Errand type excluding 'id'
+            return {
+              id: doc.id, // Include the document ID
+              ...data, // Spread existing data
+              // Provide defaults for potentially missing fields and new fields
+              title: data.title ?? 'Untitled Errand',
+              description: data.description ?? '',
+              location: data.location ?? '',
+              duration: data.duration ?? '',
+              fee: data.fee ?? null,
+              status: data.status ?? 'open',
+              uid: data.uid,
+            // --- Continued in Part 3 ---
+// src/pages/UserProfilePage.tsx
+// --- Continued from Part 2 ---
+
+              category: data.category ?? 'uncategorized', // New field
+              currency: data.currency ?? 'NGN', // New field
+              likedByUids: data.likedByUids ?? [], // New array field, default to empty array
+              viewedByUids: data.viewedByUids ?? [], // New array field, default to empty array
+              mediaUrls: data.mediaUrls ?? [], // Existing array field, default to empty array
+            };
+          });
+          setLikedErrands(liked); // Update state with liked errands
+        } else {
+          // If viewing someone else's profile, ensure liked errands state is empty.
+          setLikedErrands([]);
+        }
+
+      } catch (err) {
+        // Error handling: Log the error and set error state for UI
+        console.error("Error fetching profile or errands:", err);
+        setError('Failed to load profile. Please check your connection or try again.');
+        // Clear states on error
+        setProfile(null);
+        setErrands([]);
+        setLikedErrands([]);
+      } finally {
+        // Always set loading to false when fetch is complete (success or error)
+        setLoading(false);
+      }
+    };
+
+    // Trigger the fetch logic when auth is loaded and user ID is available
+    if (!authLoading && userIdFromUrl) {
+      fetchProfileAndErrands(userIdFromUrl);
+    } else if (!authLoading && !userIdFromUrl) {
+       // Handle case with no user ID in URL
+       setLoading(false);
+       setError("No user specified.");
     }
-    setMediaFiles(files);
-    setSubmitError(null);
-  };
+  // --- Continued in Part 4 ---
+// src/pages/UserProfilePage.tsx
+// --- Continued from Part 3 ---
 
-  const uploadFiles = async () => {
-    const urls: string[] = [];
-    for (const file of mediaFiles) {
-      const fileRef = ref(storage, `errands/${Date.now()}-${file.name}`);
-      await uploadBytes(fileRef, file);
-      const url = await getDownloadURL(fileRef);
-      urls.push(url);
-    }
-    return urls;
-  };
+  // Dependencies: Re-run effect if user ID from URL, auth loading, or current user changes
+  }, [userIdFromUrl, authLoading, currentUser, db]); // Added db as dependency
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-
-    const error = validateForm();
-    if (error) {
-      setSubmitError(error);
-      setSubmitSuccess(false);
-      return;
-    }
-
-    if (!currentUser) {
-      setSubmitError("You must be logged in to post an errand.");
-      setSubmitSuccess(false);
-      return;
-    }
-
-    setSubmitting(true);
-    setSubmitError(null);
-    setSubmitSuccess(false);
-
-    try {
-      const mediaUrls = await uploadFiles();
-
-      const errandData: ErrandWriteData = {
-        uid: currentUser.uid,
-        title: 'Post Errand',
-        description: description.trim(),
-        location: location.trim(),
-        duration: duration.trim(),
-        fee: parseFloat(fee),
-        status: "open",
-        geo,
-        createdAt: serverTimestamp(),
-        viewCount: 0,
-        clickCount: 0,
-        likes: 0,
-        mediaUrls,
-      };
-
-      await addDoc(collection(db, "errands"), errandData);
-      setSubmitSuccess(true);
-
-      setTimeout(() => navigate("/dashboard"), 2000);
-
-      // reset form
-      setDescription("");
-      setLocation("");
-      setDuration("");
-      setFee("");
-      setMediaFiles([]);
-      setGeo(null);
-      geoAutoFilledRef.current = false;
-      setGeoStatus('idle');
-      setGeoMessage(null);
-    } catch (err: any) {
-      console.error("Error posting errand:", err);
-      setSubmitError("Failed to post errand: " + (err.message || "Unexpected error."));
-      setSubmitSuccess(false);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  if (authLoading) {
+  // JSX Render Logic
+  if (authLoading || loading) {
     return (
-      <div className="container my-5">
-        <div className="alert alert-info text-center">
-          <span className="spinner-border spinner-border-sm me-2"></span>
-          Loading user session...
+      <div className="container my-5 text-center">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Loading...</span>
         </div>
+        <p className="mt-2 text-muted">{authLoading ? 'Loading authentication...' : 'Loading profile data...'}</p>
       </div>
     );
   }
 
+  if (error) {
+    return <div className="container my-5 alert alert-danger text-center">{error}</div>;
+  }
+
+  if (!profile) {
+      return null; // Should be covered by error state now
+  }
+
+  const isOwnProfile = currentUser?.uid === profile.uid;
+
   return (
     <div className="container my-5">
-      <h3 className="text-center mb-4">Post a New Errand</h3>
-
-      {submitSuccess && (
-        <div className="alert alert-success text-center">Errand posted! Redirecting...</div>
-      )}
-      {submitError && <div className="alert alert-danger text-center">{submitError}</div>}
-
-      <div className="card shadow-sm p-4 p-md-5">
-        <form onSubmit={handleSubmit}>
-          {/* Description */}
-          <div className="mb-3">
-            <label htmlFor="description" className="form-label">Description</label>
-            <textarea
-              className="form-control"
-              id="description"
-              rows={4}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              disabled={submitting}
-              required
+      <div className="card shadow-sm p-4 p-md-5 mb-4">
+        <div className="row align-items-center">
+          <div className="col-md-3 text-center mb-3 mb-md-0">
+            <img
+              src={ (profile && profile.avatarUrl) ? profile.avatarUrl : (profile?.email ? `https://www.gravatar.com/avatar/${btoa(profile.email.trim().toLowerCase())}?d=mp&s=150` : 'https://www.gravatar.com/avatar/?d=mp&s=150') }
+              alt={`${profile.username}'s avatar`}
+              className="rounded-circle img-fluid"
+              style={{ width: '150px', height: '150px', objectFit: 'cover' }}
+              onError={(e) => { const target = e.target as HTMLImageElement; target.onerror = null; target.src = 'https://www.gravatar.com/avatar/?d=mp&s=150'; }}
             />
           </div>
-
-          {/* Location */}
-          <div className="mb-3">
-            <label htmlFor="location" className="form-label">Location</label>
-            <input
-              type="text"
-              className="form-control"
-              id="location"
-              value={location}
-              onChange={(e) => {
-                setLocation(e.target.value);
-                geoAutoFilledRef.current = false;
-              }}
-              disabled={submitting}
-              required
-            />
-            {geoMessage && <small className="d-block mt-1 text-muted">{geoMessage}</small>}
-            {geoStatus !== "loading" && navigator.geolocation && (
-              <button
-                type="button"
-                className="btn btn-outline-secondary btn-sm mt-2"
-                onClick={getGeolocation}
-                disabled={submitting}
-              >
-                Retry Geolocation
-              </button>
+          <div className="col-md-9">
+            <h3 className="mb-2">{profile.name}</h3>
+            <h4 className="text-primary mb-3">@{profile.username}</h4>
+            {profile.bio && <p className="text-muted mb-3">{profile.bio}</p>}
+            <p><strong>Role:</strong> {profile.userType}</p>
+            <div className="d-flex flex-wrap gap-3 mb-3">
+              <span className="badge bg-secondary fs-6">Followers: {profile.followersCount}</span>
+              <span className="badge bg-secondary fs-6">Following: {profile.followingCount}</span>
+              <span className="badge bg-success fs-6">Likes: {profile.likes}</span>
+            </div>
+            {profile.createdAt && 'toDate' in profile.createdAt && (
+              <p className="text-muted small">Joined: {new Date((profile.createdAt as Timestamp).toDate()).toLocaleDateString()}</p>
             )}
           </div>
-
-          {/* Duration and Fee */}
-          <div className="row g-3 mb-3">
-            <div className="col-md-6">
-              <label htmlFor="duration" className="form-label">Duration</label>
-              <input
-                type="text"
-                className="form-control"
-                id="duration"
-                value={duration}
-                onChange={(e) => setDuration(e.target.value)}
-                disabled={submitting}
-                required
-              />
-            </div>
-            <div className="col-md-6">
-              <label htmlFor="fee" className="form-label">Fee (₦)</label>
-              <input
-                type="number"
-                className="form-control"
-                id="fee"
-                value={fee}
-                onChange={(e) => setFee(e.target.value)}
-                disabled={submitting}
-                required
-                min="1"
-              />
-            </div>
-          </div>
-
-          {/* File Upload */}
-          <div className="mb-3">
-            <label htmlFor="mediaFiles" className="form-label">Upload up to 4 Images or Videos</label>
-            <input
-              type="file"
-              className="form-control"
-              id="mediaFiles"
-              multiple
-              accept="image/*,video/*"
-              onChange={handleFileChange}
-              disabled={submitting}
-            />
-            <small className="form-text text-muted">Max 4 files, images or videos.</small>
-          </div>
-
-          {/* Submit */}
-          <button
-            type="submit"
-            className="btn btn-primary w-100 mt-3"
-            disabled={submitting}
-          >
-            {submitting && <span className="spinner-border spinner-border-sm me-2"></span>}
-            {submitting ? "Posting..." : "Post Errand"}
-          </button>
-        </form>
+        </div>
       </div>
+
+      <ul className="nav nav-tabs mb-4">
+        <li className="nav-item">
+          <button className={`nav-link ${tab === 'posted' ? 'active' : ''}`} onClick={() => setTab('posted')}>
+            Posted Errands
+          </button>
+        </li>
+        {isOwnProfile && (
+          <li className="nav-item">
+            <button className={`nav-link ${tab === 'liked' ? 'active' : ''}`} onClick={() => setTab('liked')}>
+              Liked Errands
+            </button>
+          </li>
+        )}
+      </ul>
+
+      {tab === 'posted' ? (
+          <UsersErrandFeed errands={errands} />
+      ) : (
+          <UsersErrandFeed errands={likedErrands} />
+      )}
     </div>
   );
 };
 
-export default PostErrand;
+export default UserProfilePage;

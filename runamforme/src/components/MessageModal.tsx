@@ -4,9 +4,12 @@ import { addDoc, collection, serverTimestamp, doc, setDoc } from 'firebase/fires
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
 
-interface MessageModalProps {
+export interface MessageModalProps {
   recipientId: string;
+  show: boolean;
   onClose: () => void;
+  title?: string;
+  children?: React.ReactNode;
 }
 
 const MessageModal: React.FC<MessageModalProps> = ({ recipientId, onClose }) => {

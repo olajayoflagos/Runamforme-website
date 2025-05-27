@@ -1,55 +1,80 @@
-// UserProfilePage.tsx
-// ===========================
+// src/pages/UserProfilePage.tsx
+
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  doc,
+  getDoc,
+} from 'firebase/firestore'; // array-contains used as string
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
-import { type UserProfile, type Errand } from '../types';
+import { type UserProfile, type Errand, type Timestamp } from '../types';
 import UsersErrandFeed from '../components/UsersErrandFeed';
 
 const UserProfilePage: React.FC = () => {
-  const { username } = useParams<{ username: string }>();
+  // Get user ID (UID) from the URL parameter named 'id'
+  const { id: userIdFromUrl } = useParams<{ id: string }>();
+
+  // Get current user and auth loading state
   const { currentUser, loading: authLoading } = useAuth();
+
+  // State for profile data, posted errands, and liked errands
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [errands, setErrands] = useState<Errand[]>([]);
   const [likedErrands, setLikedErrands] = useState<Errand[]>([]);
+
+  // State for UI loading and errors
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'posted' | 'liked'>('posted');
-  
 
-  
+  // State for managing tabs (Posted/Liked)
+  const [tab, setTab] = useState<'posted' | 'liked'>('posted');
+
+  // Effect to fetch profile and errands
   useEffect(() => {
-    const fetchProfileAndErrands = async () => {
-      if (!username) return;
+    const fetchProfileAndErrands = async (userId: string) => {
+      if (!userId) {
+         setLoading(false);
+         setError('User ID not provided in URL.');
+         return;
+      }
 
       try {
         setLoading(true);
-        const usersRef = collection(db, 'users');
-        const q = query(usersRef, where('username', '==', username));
-        const snapshot = await getDocs(q);
+        setError(null);
+        setProfile(null); // Clear states on new fetch
+        setErrands([]);
+        setLikedErrands([]);
 
-        if (snapshot.empty) {
+        // Fetch User Profile by UID (efficient)
+        const userDocRef = doc(db, 'users', userId);
+        const userDocSnap = await getDoc(userDocRef);
+
+        if (!userDocSnap.exists()) {
           setError('User not found.');
+          setLoading(false);
           return;
         }
 
-        const userDoc = snapshot.docs[0];
-        const userData = userDoc.data() as UserProfile;
-        const userId = userDoc.id;
+        const userData = userDocSnap.data() as UserProfile;
+        const profileId = userDocSnap.id;
 
+        // Construct complete profile object with defaults
         const completeProfile: UserProfile = {
-          id: userId,
-          uid: userId,
+          id: profileId,
+          uid: profileId,
           name: userData.name,
           username: userData.username,
-          email: userData.email,
+          email: userData.email, // Check security rules if public
           userType: userData.userType,
           createdAt: userData.createdAt,
           followersCount: userData.followersCount ?? 0,
           followingCount: userData.followingCount ?? 0,
-          likes: userData.likes ?? 0,
+          likes: userData.likes ?? 0, // Profile likes?
           bio: userData.bio ?? '',
           avatarUrl: userData.avatarUrl ?? '',
           isVerified: userData.isVerified ?? false,
@@ -57,50 +82,114 @@ const UserProfilePage: React.FC = () => {
 
         setProfile(completeProfile);
 
+        // Fetch Errands Posted by this User
         const errandsQuery = query(collection(db, 'errands'), where('uid', '==', userId));
         const errandsSnapshot = await getDocs(errandsQuery);
+      // --- Continued in Part 2 ---
+// src/pages/UserProfilePage.tsx
+// --- Continued from Part 1 ---
+
         const userErrands: Errand[] = errandsSnapshot.docs.map((doc) => {
-          const { id, ...data } = doc.data() as Errand & { id?: string };
+          const data = doc.data() as Errand; // Cast document data to Errand type
           return {
-            id: doc.id,
-            ...data,
-            postedByUsername: doc.data().postedByUsername ?? username,
+            ...data, // Spread existing data
+            id: doc.id, // Ensure the document ID is set and not overwritten
+            // Provide defaults for potentially missing fields and new fields
+            title: data.title ?? 'Untitled Errand',
+            description: data.description ?? '',
+            location: data.location ?? '',
+            duration: data.duration ?? '',
+            fee: data.fee ?? null,
+            status: data.status ?? 'open',
+            uid: data.uid,
+            category: data.category ?? 'uncategorized', // New field
+            currency: data.currency ?? 'NGN', // New field
+            likedByUids: data.likedByUids ?? [], // New array field, default to empty array
+            viewedByUids: data.viewedByUids ?? [], // New array field, default to empty array
+            mediaUrls: data.mediaUrls ?? [], // Existing array field, default to empty array
           };
         });
 
-        setErrands(userErrands);
+        setErrands(userErrands); // Update state with posted errands
 
-        if (currentUser?.uid === userId) {
-          const likedQuery = query(collection(db, 'errands'), where('likedBy', 'array-contains', userId));
+        // --- Fetch Errands Liked by this User (Only if viewing their own profile) ---
+        // Check if the currently logged-in user's UID matches the profile's UID from the URL.
+        const isOwnProfile = currentUser?.uid === userId;
+
+        if (isOwnProfile) {
+          // Query errands where the 'likedByUids' array field contains the current user's UID.
+          // This requires a 'likedByUids' field with an index.
+          const likedQuery = query(collection(db, 'errands'), where('likedByUids', 'array-contains', userId));
+          // Execute the query to get the liked errands.
           const likedSnapshot = await getDocs(likedQuery);
+          // Map the liked errand documents to an array of Errand objects.
           const liked: Errand[] = likedSnapshot.docs.map((doc) => {
-            const { id, ...data } = doc.data() as Errand & { id?: string };
+            const data = doc.data() as Errand; // Cast document data to Errand type
             return {
-              id: doc.id,
-              ...data,
+              ...data, // Spread existing data
+              id: doc.id, // Ensure the document ID is set and not overwritten
+              // Provide defaults for potentially missing fields and new fields
+              title: data.title ?? 'Untitled Errand',
+              description: data.description ?? '',
+              location: data.location ?? '',
+              duration: data.duration ?? '',
+              fee: data.fee ?? null,
+              status: data.status ?? 'open',
+              uid: data.uid,
+            // --- Continued in Part 3 ---
+// src/pages/UserProfilePage.tsx
+// --- Continued from Part 2 ---
+
+              category: data.category ?? 'uncategorized', // New field
+              currency: data.currency ?? 'NGN', // New field
+              likedByUids: data.likedByUids ?? [], // New array field, default to empty array
+              viewedByUids: data.viewedByUids ?? [], // New array field, default to empty array
+              mediaUrls: data.mediaUrls ?? [], // Existing array field, default to empty array
             };
           });
-          setLikedErrands(liked);
+          setLikedErrands(liked); // Update state with liked errands
+        } else {
+          // If viewing someone else's profile, ensure liked errands state is empty.
+          setLikedErrands([]);
         }
+
       } catch (err) {
-        console.error(err);
-        setError('Failed to load profile.');
+        // Error handling: Log the error and set error state for UI
+        console.error("Error fetching profile or errands:", err);
+        setError('Failed to load profile. Please check your connection or try again.');
+        // Clear states on error
+        setProfile(null);
+        setErrands([]);
+        setLikedErrands([]);
       } finally {
+        // Always set loading to false when fetch is complete (success or error)
         setLoading(false);
       }
     };
 
-    if (!authLoading) {
-      fetchProfileAndErrands();
+    // Trigger the fetch logic when auth is loaded and user ID is available
+    if (!authLoading && userIdFromUrl) {
+      fetchProfileAndErrands(userIdFromUrl);
+    } else if (!authLoading && !userIdFromUrl) {
+       // Handle case with no user ID in URL
+       setLoading(false);
+       setError("No user specified.");
     }
-  }, [username, authLoading, currentUser]);
+  // --- Continued in Part 4 ---
+// src/pages/UserProfilePage.tsx
+// --- Continued from Part 3 ---
 
+  // Dependencies: Re-run effect if user ID from URL, auth loading, or current user changes
+  }, [userIdFromUrl, authLoading, currentUser, db]); // Added db as dependency
+
+  // JSX Render Logic
   if (authLoading || loading) {
     return (
       <div className="container my-5 text-center">
         <div className="spinner-border text-primary" role="status">
           <span className="visually-hidden">Loading...</span>
         </div>
+        <p className="mt-2 text-muted">{authLoading ? 'Loading authentication...' : 'Loading profile data...'}</p>
       </div>
     );
   }
@@ -109,7 +198,9 @@ const UserProfilePage: React.FC = () => {
     return <div className="container my-5 alert alert-danger text-center">{error}</div>;
   }
 
-  if (!profile) return null;
+  if (!profile) {
+      return null; // Should be covered by error state now
+  }
 
   const isOwnProfile = currentUser?.uid === profile.uid;
 
@@ -119,18 +210,11 @@ const UserProfilePage: React.FC = () => {
         <div className="row align-items-center">
           <div className="col-md-3 text-center mb-3 mb-md-0">
             <img
-              src={
-                profile.avatarUrl ||
-                `https://www.gravatar.com/avatar/${btoa(profile.email.trim().toLowerCase())}?d=mp&s=150`
-              }
+              src={ (profile && profile.avatarUrl) ? profile.avatarUrl : (profile?.email ? `https://www.gravatar.com/avatar/${btoa(profile.email.trim().toLowerCase())}?d=mp&s=150` : 'https://www.gravatar.com/avatar/?d=mp&s=150') }
               alt={`${profile.username}'s avatar`}
               className="rounded-circle img-fluid"
               style={{ width: '150px', height: '150px', objectFit: 'cover' }}
-              onError={(e) => {
-                const target = e.target as HTMLImageElement;
-                target.onerror = null;
-                target.src = 'https://www.gravatar.com/avatar/?d=mp&s=150';
-              }}
+              onError={(e) => { const target = e.target as HTMLImageElement; target.onerror = null; target.src = 'https://www.gravatar.com/avatar/?d=mp&s=150'; }}
             />
           </div>
           <div className="col-md-9">
@@ -143,8 +227,8 @@ const UserProfilePage: React.FC = () => {
               <span className="badge bg-secondary fs-6">Following: {profile.followingCount}</span>
               <span className="badge bg-success fs-6">Likes: {profile.likes}</span>
             </div>
-            {profile.createdAt && (
-              <p className="text-muted small">Joined: {new Date(profile.createdAt.toDate()).toLocaleDateString()}</p>
+            {profile.createdAt && 'toDate' in profile.createdAt && (
+              <p className="text-muted small">Joined: {new Date((profile.createdAt as Timestamp).toDate()).toLocaleDateString()}</p>
             )}
           </div>
         </div>
@@ -166,13 +250,10 @@ const UserProfilePage: React.FC = () => {
       </ul>
 
       {tab === 'posted' ? (
-  <UsersErrandFeed errands={errands} />
-) : (
-  <UsersErrandFeed errands={likedErrands} />
-)}
-
-
-      
+          <UsersErrandFeed errands={errands} />
+      ) : (
+          <UsersErrandFeed errands={likedErrands} />
+      )}
     </div>
   );
 };
