@@ -129,6 +129,13 @@ footer {
     margin-right: auto;
 } */
 
+.hover-opacity {
+  opacity: 0.8;
+  transition: opacity 0.2s ease;
+}
+.hover-opacity:hover {
+  opacity: 1;
+}
 
 /* Add more responsive adjustments using standard CSS media queries here if needed */
 /* Example:

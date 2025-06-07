@@ -1,243 +1,404 @@
-// src/pages/Login.tsx - Part 1 of 2
-import React, { useState } from "react"; // Import React and useState hook
-// Import Link and useNavigate from react-router-dom for navigation
-import { Link, useNavigate } from "react-router-dom";
-// Import necessary Firebase Auth functions
-import { signInWithEmailAndPassword } from "firebase/auth"; // For email/password login
-import { GoogleAuthProvider, signInWithPopup } from "firebase/auth"; // For Google login
-// Import the auth instance from your config file
-import { auth } from "../firebase/config";
-// Import the useAuth hook from your AuthContext to get user state
-import { useAuth } from "../contexts/AuthContext";
+import React, { useState, useRef, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
+import { RecaptchaVerifier, type ConfirmationResult, type AuthError } from 'firebase/auth';
+import { auth, db } from '../firebase/config';
+import { doc, setDoc, serverTimestamp, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { useAuth } from '../contexts/AuthContext';
+import type { UserProfileWriteData } from '../types';
+import { Button, Card, Form, Alert, Spinner, Container, Row, Col } from 'react-bootstrap';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
-  // Get the currentUser object and the initial auth loading state from the context
-  const { currentUser, loading: authLoading } = useAuth();
+  const { currentUser, loading: authLoading, login, loginWithGoogle, loginWithPhone, loginAnonymously } = useAuth();
+  const recaptchaVerifier = useRef<RecaptchaVerifier | null>(null);
+  const confirmationResult = useRef<ConfirmationResult | null>(null);
 
-  // State for email/password login form inputs
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  // Loading state specifically for the email/password login action
-  const [emailPasswordLoading, setEmailPasswordLoading] = useState(false);
-  // Error state specifically for the email/password login action
-  const [emailPasswordError, setEmailPasswordError] = useState<string | null>(null);
+  const [formData, setFormData] = useState({
+    email: '',
+    password: '',
+    phoneNumber: '',
+    otp: '',
+    username: '',
+  });
+  const [otpSent, setOtpSent] = useState(false);
+  const [loading, setLoading] = useState({
+    email: false,
+    google: false,
+    phone: false,
+    anonymous: false,
+  });
+  const [error, setError] = useState<string | null>(null);
 
-  // Loading state specifically for the Google login action
-  const [googleLoading, setGoogleLoading] = useState(false);
-  // Error state specifically for the Google login action
-  const [googleError, setGoogleError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!authLoading && currentUser) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [authLoading, currentUser, navigate]);
 
-  // If user is already logged in (and auth state is done loading), redirect them away from the login page.
-  // This check should happen first before rendering the form content.
-  // `replace: true` prevents navigating back to the login page using the browser's back button.
-  if (!authLoading && currentUser) {
-    navigate("/dashboard", { replace: true });
-    return null; // Return null while redirecting
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: name === 'username' ? value.toLowerCase() : value,
+    }));
+  };
+
+  const validateUsername = (username: string) => {
+    if (!username.trim()) return 'Username is required';
+    if (username.length < 3) return 'Username must be at least 3 characters';
+    if (!/^[a-z0-9_]+$/.test(username)) return 'Only lowercase letters, numbers, and underscores';
+    return null;
+  };
+
+  const checkUsernameUnique = async (username: string) => {
+    const q = query(collection(db, 'users'), where('username', '==', username));
+    const snapshot = await getDocs(q);
+    return snapshot.empty ? null : 'Username is already taken';
+  };
+
+  const handleError = (err: AuthError, authMethod: string) => {
+    let errorMessage = `${authMethod} failed. Please try again.`;
+    switch (err.code) {
+      case 'auth/invalid-email':
+        errorMessage = 'Invalid email address format.';
+        break;
+      case 'auth/user-disabled':
+        errorMessage = 'This account has been disabled.';
+        break;
+      case 'auth/invalid-credential':
+        errorMessage = 'Invalid email or password.';
+        break;
+      case 'auth/invalid-phone-number':
+        errorMessage = 'Invalid phone number format.';
+        break;
+      case 'auth/invalid-verification-code':
+        errorMessage = 'Invalid OTP code.';
+        break;
+      case 'auth/popup-closed-by-user':
+      case 'auth/cancelled-popup-request':
+        return;
+    }
+    setError(errorMessage);
+  };
+
+  const handleEmailLogin = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setLoading(prev => ({ ...prev, email: true }));
+  setError(null);
+
+  try {
+    let emailToLogin = formData.email;
+
+    if (!emailToLogin.includes('@')) {
+      const q = query(collection(db, 'users'), where('username', '==', formData.email.toLowerCase()));
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) {
+        throw new Error('No user found with that username');
+      }
+      const userDoc = snapshot.docs[0];
+      const data = userDoc.data() as { email?: string };
+      if (!data.email) {
+        throw new Error('Account with this username has no email');
+      }
+      emailToLogin = data.email;
+    }
+
+    await login(emailToLogin, formData.password);
+navigate('/dashboard');
+} catch (err) {
+  if (err && typeof err === 'object' && 'code' in err) {
+    const firebaseErr = err as AuthError;
+    handleError(firebaseErr, 'Login');
+  } else if (err instanceof Error) {
+    setError(err.message);
+  } else {
+    setError('An unknown error occurred.');
+  }
+} finally {
+  setLoading(prev => ({ ...prev, email: false }));
+}
+
+};
+
+
+  const handleGoogleLogin = async () => {
+    setLoading(prev => ({ ...prev, google: true }));
+    setError(null);
+
+    try {
+      await loginWithGoogle();
+      navigate('/dashboard');
+    } catch (err) {
+      handleError(err as AuthError, 'Google login');
+    } finally {
+      setLoading(prev => ({ ...prev, google: false }));
+    }
+  };
+
+  const handlePhoneLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(prev => ({ ...prev, phone: true }));
+    setError(null);
+
+    try {
+      if (!otpSent) {
+        if (!recaptchaVerifier.current) {
+          recaptchaVerifier.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
+            size: 'invisible',
+          });
+        }
+        const result = await loginWithPhone(formData.phoneNumber, recaptchaVerifier.current);
+        confirmationResult.current = result;
+        setOtpSent(true);
+      } else if (confirmationResult.current) {
+        if (!formData.username) {
+          setError('Please enter a username.');
+          return;
+        }
+        const usernameError = validateUsername(formData.username);
+        if (usernameError) {
+          setError(usernameError);
+          return;
+        }
+        const uniqueError = await checkUsernameUnique(formData.username);
+        if (uniqueError) {
+          setError(uniqueError);
+          return;
+        }
+        const userCredential = await confirmationResult.current.confirm(formData.otp);
+        const userRef = doc(db, 'users', userCredential.user.uid);
+        const userSnap = await getDoc(userRef);
+        if (!userSnap.exists()) {
+          const profileData: UserProfileWriteData = {
+            name: 'New User',
+            username: formData.username,
+            searchableUsername: formData.username.toLowerCase(),
+            email: '',
+            userType: 'both',
+            createdAt: serverTimestamp(),
+            followersCount: 0,
+            followingCount: 0,
+            likes: 0,
+            bio: '',
+            isVerified: false,
+            walletBalance: 0,
+            avatarUrl: '',
+          };
+          await setDoc(userRef, profileData);
+        }
+        navigate('/dashboard');
+      }
+    } catch (err) {
+      handleError(err as AuthError, 'Phone login');
+      recaptchaVerifier.current?.clear();
+      recaptchaVerifier.current = null;
+      setOtpSent(false);
+    } finally {
+      setLoading(prev => ({ ...prev, phone: false }));
+    }
+  };
+
+  const handleAnonymousLogin = async () => {
+    setLoading(prev => ({ ...prev, anonymous: true }));
+    setError(null);
+
+    try {
+      await loginAnonymously();
+      navigate('/dashboard');
+    } catch (err) {
+      handleError(err as AuthError, 'Anonymous login');
+    } finally {
+      setLoading(prev => ({ ...prev, anonymous: false }));
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <Container className="d-flex justify-content-center align-items-center min-vh-100">
+        <Spinner animation="border" variant="primary" role="status">
+          <span className="visually-hidden">Loading...</span>
+        </Spinner>
+      </Container>
+    );
   }
 
-   // While the initial authentication state is loading, show a loading indicator.
-   // This prevents flickering or showing the login form momentarily when the user is actually logged in.
-   if (authLoading) {
-     return (
-        <div className="container my-5 text-center">
-           <div>Loading user session...</div> {/* Consistent loading message styling */}
-        </div>
-     );
-   }
-
-  // Handle Email/Password Login form submission
-  const handleEmailPasswordLogin = async (e: React.FormEvent) => {
-    e.preventDefault(); // Prevent default browser form submission
-
-    // Reset loading and error states before the action
-    setEmailPasswordLoading(true);
-    setEmailPasswordError(null);
-
-    try {
-      // Use Firebase Auth SDK function to sign in with email and password
-      await signInWithEmailAndPassword(auth, email, password);
-      // Success! The onAuthStateChanged listener in AuthContext will detect this
-      // and update the global currentUser state. The redirect logic at the
-      // top of this component will then handle navigation to the dashboard.
-      // No need to call navigate here.
-
-    } catch (err: any) { // Catch the error (using `any` for simplicity with Firebase Auth errors)
-      console.error("Email/Password Login failed:", err);
-      setEmailPasswordLoading(false); // Stop loading on error
-
-      // Display user-friendly error messages based on Firebase Auth error codes
-      // https://firebase.google.com/docs/auth/admin/errors
-      if (err.code) {
-        switch (err.code) {
-            case 'auth/invalid-email':
-                setEmailPasswordError("Invalid email address format.");
-                break;
-            case 'auth/user-disabled':
-                setEmailPasswordError("This user account has been disabled.");
-                break;
-            case 'auth/user-not-found':
-            case 'auth/wrong-password': // For security, don't distinguish between user not found and wrong password
-            case 'auth/invalid-credential': // Newer code for invalid email/password combo
-                setEmailPasswordError("Invalid email or password.");
-                break;
-            // Add more cases for other specific errors if needed
-            default:
-                // Fallback for unhandled Firebase errors
-                if (err.message.startsWith("Firebase: Error")) {
-                     setEmailPasswordError(err.message.replace("Firebase: Error", "Login failed"));
-                } else {
-                    setEmailPasswordError("An unexpected error occurred during login.");
-                }
-        }
-      } else {
-        // Handle non-Firebase errors
-        setEmailPasswordError("An unexpected error occurred during login.");
-      }
-    }
-    // On successful login, the component will unmount due to navigation,
-    // so no need to explicitly set loading to false in the success path.
-  };
-
-   // Handle Google Login button click
-  const handleGoogleLogin = async () => {
-    // Create a new GoogleAuthProvider instance (can also be imported from auth.ts)
-    const provider = new GoogleAuthProvider();
-
-    // Reset loading and error states before the action
-    setGoogleLoading(true);
-    setGoogleError(null); // Clear previous Google errors (using emailPasswordError for display below)
-    setEmailPasswordError(null); // Clear email/password errors too for clarity
-
-
-    try {
-      // Use Firebase Auth SDK function to sign in with Google popup
-      await signInWithPopup(auth, provider);
-      // Success! AuthContext listener will update state and trigger navigation.
-      // No need to call navigate here.
-
-    } catch (err: any) { // Catch the error
-      console.error("Google Login failed:", err);
-      setGoogleLoading(false); // Stop loading on error
-
-      // Only show/set an error if it's NOT the user closing the popup or cancelling the request
-      // This is good UX.
-      if (err.code && err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
-         // Use the general error state for display
-         // You might want to keep separate error states and display areas
-         setEmailPasswordError(`Google sign-in failed: ${err.message}`); // Provide error details
-      }
-       // If the user closed the popup or cancelled, we silently ignore it.
-    }
-    // On successful login, the component will unmount due to navigation.
-  };
-
-  // This is the end of Part 1. The render return statement and JSX will be in Part 2.
-// src/pages/Login.tsx - Part 2 of 2
-// ... (Code from Part 1 above - including imports, state, authLoading check, handleEmailPasswordLogin, handleGoogleLogin functions)
-
-  // If we reach here, authLoading is false, and there is no currentUser, so render the login form.
   return (
-    // Use Bootstrap container and grid for layout and centering
-    <div className="container my-5"> {/* Add vertical margin */}
-      <div className="row justify-content-center"> {/* Center the column horizontally */}
-        <div className="col-md-8 col-lg-6 col-xl-5"> {/* Responsive column width */}
-          {/* Main Card wrapping the login form and buttons */}
-          <div className="card shadow p-4 p-md-5"> {/* Add shadow and padding (more on medium+ screens) */}
-            <h2 className="card-title text-center mb-4">Login to RunAmForMe</h2> {/* Centered title with bottom margin */}
+    <Container className="py-5">
+      <Helmet>
+        <title>Login - RunAmForMe</title>
+        <meta name="description" content="Login to your RunAmForMe account to post or run errands." />
+      </Helmet>
+      <Row className="justify-content-center">
+        <Col md={8} lg={6} xl={5}>
+          <Card className="shadow-sm">
+            <Card.Body className="p-4 p-md-5">
+              <Card.Title className="text-center mb-4">
+                <h2>Login to RunAmForMe</h2>
+              </Card.Title>
 
-            {/* Display general error message if any login method failed */}
-            {(emailPasswordError || googleError) && (
-              <div className="alert alert-danger text-center" role="alert">
-                {emailPasswordError || googleError} {/* Display the relevant error message */}
+              {error && (
+                <Alert variant="danger" dismissible onClose={() => setError(null)}>
+                  {error}
+                </Alert>
+              )}
+
+              <Form onSubmit={handleEmailLogin} className="mb-4">
+                <Form.Group className="mb-3">
+                  <Form.Label>Email address</Form.Label>
+                  <Form.Control
+                    type="email"
+                    name="email"
+                    value={formData.email}
+                    onChange={handleChange}
+                    required
+                    disabled={Object.values(loading).some(Boolean)}
+                  />
+                </Form.Group>
+
+                <Form.Group className="mb-3">
+                  <Form.Label>Password</Form.Label>
+                  <Form.Control
+                    type="password"
+                    name="password"
+                    value={formData.password}
+                    onChange={handleChange}
+                    required
+                    minLength={6}
+                    disabled={Object.values(loading).some(Boolean)}
+                  />
+                </Form.Group>
+                <div className="text-end mb-3">
+  <Link to="/reset-password" className="text-primary" style={{ fontSize: '0.9rem' }}>
+    Forgot Password?
+  </Link>
+</div>
+
+
+                <Button 
+                  variant="primary" 
+                  type="submit" 
+                  disabled={Object.values(loading).some(Boolean)}
+                  className="w-100 mb-3"
+                >
+                  {loading.email ? (
+                    <Spinner size="sm" animation="border" role="status" aria-hidden="true" />
+                  ) : (
+                    'Login with Email'
+                  )}
+                </Button>
+              </Form>
+
+              <div className="text-center text-muted mb-3">OR</div>
+
+              <Button 
+                variant="outline-secondary" 
+                onClick={handleGoogleLogin}
+                disabled={Object.values(loading).some(Boolean)}
+                className="w-100 mb-3"
+              >
+                {loading.google ? (
+                  <Spinner size="sm" animation="border" role="status" aria-hidden="true" />
+                  ) : (
+                    'Continue with Google'
+                  )}
+              </Button>
+
+              <Form onSubmit={handlePhoneLogin} className="mb-4">
+                <Form.Group className="mb-3">
+                  <Form.Label>Phone Number</Form.Label>
+                  <Form.Control
+                    type="tel"
+                    name="phoneNumber"
+                    value={formData.phoneNumber}
+                    onChange={handleChange}
+                    placeholder="+1234567890"
+                    required
+                    disabled={otpSent || Object.values(loading).some(Boolean)}
+                  />
+                </Form.Group>
+
+                {otpSent && (
+                  <>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Username</Form.Label>
+                      <Form.Control
+                        type="text"
+                        name="username"
+                        value={formData.username}
+                        onChange={handleChange}
+                        required
+                        disabled={Object.values(loading).some(Boolean)}
+                        onBlur={async () => {
+                          const error = validateUsername(formData.username);
+                          if (error) setError(error);
+                          else {
+                            const uniqueError = await checkUsernameUnique(formData.username);
+                            if (uniqueError) setError(uniqueError);
+                          }
+                        }}
+                      />
+                      <Form.Text className="text-muted">
+                        Lowercase letters, numbers, and underscores only
+                      </Form.Text>
+                    </Form.Group>
+                    <Form.Group className="mb-3">
+                      <Form.Label>OTP Code</Form.Label>
+                      <Form.Control
+                        type="text"
+                        name="otp"
+                        value={formData.otp}
+                        onChange={handleChange}
+                        required
+                        disabled={Object.values(loading).some(Boolean)}
+                      />
+                    </Form.Group>
+                  </>
+                )}
+
+                <div id="recaptcha-container" />
+
+                <Button 
+                  variant={otpSent ? "success" : "primary"}
+                  type="submit"
+                  disabled={Object.values(loading).some(Boolean)}
+                  className="w-100 mb-3"
+                >
+                  {loading.phone ? (
+                    <Spinner size="sm" animation="border" role="status" aria-hidden="true" />
+                  ) : (
+                    otpSent ? 'Verify OTP' : 'Continue with Phone'
+                  )}
+                </Button>
+              </Form>
+
+              <div className="text-center text-muted mb-3">OR</div>
+
+              <Button 
+                variant="outline-secondary"
+                onClick={handleAnonymousLogin}
+                disabled={Object.values(loading).some(Boolean)}
+                className="w-100 mb-3"
+              >
+                {loading.anonymous ? (
+                  <Spinner size="sm" animation="border" role="status" aria-hidden="true" />
+                ) : (
+                  'Continue as Guest'
+                )}
+              </Button>
+
+              <div className="text-center mt-4">
+                Don't have an account?{' '}
+                <Link to="/register" className="text-primary">
+                  Register here
+                </Link>
               </div>
-            )}
-
-            {/* --- Email/Password Login Form --- */}
-             <p className="text-center text-muted mb-3">Sign in with your email and password.</p> {/* Descriptive text */}
-             <form onSubmit={handleEmailPasswordLogin}>
-                {/* Email Input */}
-                <div className="mb-3">
-                   <label htmlFor="emailLogin" className="form-label">Email address</label> {/* Form label */}
-                   <input
-                      type="email"
-                      className="form-control" // Bootstrap form control styling
-                      id="emailLogin" // ID for label association
-                      value={email} // Controlled component: value from state
-                      onChange={(e) => setEmail(e.target.value)} // Update state on change
-                      required // HTML5 validation
-                      disabled={emailPasswordLoading || googleLoading} // Disable inputs if either login method is loading
-                      aria-describedby="emailLoginHelp" // Accessibility
-                   />
-                    {/* Optional help text */}
-                   {/* <div id="emailLoginHelp" className="form-text">Enter the email address you registered with.</div> */}
-                </div>
-                 {/* Password Input */}
-                 <div className="mb-3">
-                   <label htmlFor="passwordLogin" className="form-label">Password</label> {/* Form label */}
-                   <input
-                      type="password"
-                      className="form-control" // Bootstrap form control styling
-                      id="passwordLogin" // ID for label association
-                      value={password} // Controlled component: value from state
-                      onChange={(e) => setPassword(e.target.value)} // Update state on change
-                      required // HTML5 validation
-                       minLength={6} // Minimum length (should match Firebase Auth setting)
-                      disabled={emailPasswordLoading || googleLoading} // Disable inputs
-                       aria-describedby="passwordLoginHelp" // Accessibility
-                   />
-                    {/* Optional help text */}
-                   {/* <div id="passwordLoginHelp" className="form-text">Enter your password.</div> */}
-                 </div>
-
-                 {/* Email/Password Login Button */}
-                 <button
-                   type="submit" // Button type is submit to trigger form onSubmit
-                   className="btn btn-primary w-100 mb-3 d-flex align-items-center justify-content-center" // Primary button, full width, bottom margin, flexbox for centering content
-                   disabled={emailPasswordLoading || googleLoading} // Disable button if any login method is loading
-                 >
-                    {/* Show spinner while email/password login is loading */}
-                    {emailPasswordLoading && <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>}
-                    {/* Button text changes based on loading state */}
-                    {emailPasswordLoading ? 'Signing In...' : 'Login with Email'}
-                 </button>
-             </form>
-            {/* --- End Email/Password Login Form --- */}
-
-
-             {/* --- Divider --- */}
-            <hr className="my-4"/> {/* Horizontal rule divider with vertical margin */}
-            <p className="text-center text-muted">OR</p> {/* Optional separator text */}
-            <hr className="my-4"/>
-             {/* --- End Divider --- */}
-
-
-             {/* --- Google Login Button --- */}
-             <button
-                className="btn btn-outline-secondary w-100 d-flex align-items-center justify-content-center" // Outline secondary button, full width, flexbox for centering
-                onClick={handleGoogleLogin} // Attach click handler for Google login
-                disabled={emailPasswordLoading || googleLoading} // Disable button if any login method is loading
-             >
-                {/* Show spinner while Google login is loading */}
-                {googleLoading && <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>}
-                Sign in with Google
-             </button>
-            {/* --- End Google Login Button --- */}
-
-
-            {/* Link to Registration Page */}
-            <div className="mt-4 text-center"> {/* Add top margin, center text */}
-              Don't have an account? <Link to="/register">Register here</Link> {/* Link component for navigation */}
-            </div>
-            {/* Optional: Add a forgot password link here later */}
-            {/* <div className="mt-2 text-center">
-               <Link to="/forgot-password">Forgot Password?</Link>
-            </div> */}
-          </div>
-        </div>
-      </div>
-    </div>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+    </Container>
   );
-}
+};
 
 export default Login;

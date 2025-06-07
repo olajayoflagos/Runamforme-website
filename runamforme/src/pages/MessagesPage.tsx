@@ -1,8 +1,6 @@
-// src/pages/MessagesPage.tsx
-
-import React, { useEffect, useState, useRef } from 'react';
-import type { FormEvent, ChangeEvent } from 'react'; // Corrected: Import FormEvent and ChangeEvent as types
-import { useParams } from 'react-router-dom';
+// MessagesPage.tsx - Complete Corrected Version
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   collection,
   query,
@@ -12,300 +10,550 @@ import {
   serverTimestamp,
   doc,
   getDoc,
-  setDoc,
-  // Removed 'where' import as it's not used in this file's main queries
-  type Timestamp, // Kept as it's used in the types import below
-  type FieldValue, // Kept as it's used in the types import below
+  updateDoc,
+  where,
+  getDocs,
+  documentId,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
-import type { Message, MessageWriteData, Conversation, ConversationWriteData, UserProfile } from '../types'; // Keep importing types from your file
-
+import { useTheme } from '../contexts/ThemeContext';
 import MessageItem from '../components/MessageItem';
+import { Button, Form, InputGroup, Alert, Spinner, Badge, ListGroup, Image, Container } from 'react-bootstrap';
+import type { Message, Conversation, UserProfile, Errand } from '../types';
+
+interface ConversationListItem extends Conversation {
+  recipientProfile?: UserProfile | null;
+  isUnread?: boolean;
+}
 
 const MessagesPage: React.FC = () => {
-  const { userId: recipientUserId } = useParams<{ userId: string }>();
-
-  const { currentUser, loading: authLoading } = useAuth();
-
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [messagesLoading, setMessagesLoading] = useState(true);
-  const [messagesError, setMessagesError] = useState<string | null>(null);
-
-  const [newMessageText, setNewMessageText] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sendingError, setSendingError] = useState<string | null>(null);
-  const [sendingSuccess, setSendingSuccess] = useState(false);
-
-
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [recipientProfile, setRecipientProfile] = useState<UserProfile | null>(null);
-
+  const { conversationId: paramConversationId } = useParams<{ conversationId?: string }>();
+  const { currentUser, isAuthenticated } = useAuth();
+  const { theme } = useTheme();
+  const navigate = useNavigate();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!currentUser?.uid || !recipientUserId) {
-      if (!authLoading) {
-         setMessagesLoading(false);
-         setMessagesError("Invalid recipient or user not logged in.");
+  // State declarations
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationsListLoading, setConversationsListLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [recipient, setRecipient] = useState<UserProfile | null>(null);
+  const [errand, setErrand] = useState<Errand | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [conversationsList, setConversationsList] = useState<ConversationListItem[]>([]);
+
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+  }, []);
+
+  const requestNotificationPermission = useCallback(async () => {
+    if ('Notification' in window && Notification.permission !== 'granted') {
+      if (Notification.permission === 'denied') {
+        console.warn('Notification permission denied by the user.');
+      } else {
+        try {
+          await Notification.requestPermission();
+        } catch (err) {
+          console.error('Error requesting notification permission:', err);
+        }
       }
+    }
+  }, []);
+
+  useEffect(() => {
+    requestNotificationPermission();
+  }, [requestNotificationPermission]);
+
+  // Load conversation data when paramConversationId changes
+  useEffect(() => {
+    if (!paramConversationId) {
+      setConversation(null);
+      setMessages([]);
+      setRecipient(null);
+      setErrand(null);
+      setUnreadCount(0);
+      setConversationLoading(false);
       return;
     }
 
-    const uids = [currentUser.uid, recipientUserId].sort();
-    const generatedConversationId = `${uids[0]}_${uids[1]}`;
-    setConversationId(generatedConversationId);
-
-    const fetchRecipientProfile = async () => {
-        try {
-            const userDoc = await getDoc(doc(db, 'users', recipientUserId));
-            // Corrected type assertion to Omit<UserProfile, 'id'>
-            if (userDoc.exists()) {
-                const data = userDoc.data() as Omit<UserProfile, 'id'>;
-                const completeProfile: UserProfile = {
-                   id: userDoc.id, uid: userDoc.id, name: data.name ?? 'Unnamed User',
-                   username: data.username ?? 'unknown_user', email: data.email ?? '',
-                   userType: data.userType ?? 'both', createdAt: data.createdAt,
-                   followersCount: data.followersCount ?? 0, followingCount: data.followingCount ?? 0,
-                   likes: data.likes ?? 0, bio: data.bio ?? '', avatarUrl: data.avatarUrl ?? '',
-                   isVerified: data.isVerified ?? false,
-                };
-                setRecipientProfile(completeProfile);
-            } else {
-                setRecipientProfile(null);
-                setMessagesError("Recipient user profile not found.");
-            }
-        } catch (error) {
-            console.error("Failed to fetch recipient profile:", error);
-            setRecipientProfile(null);
-            setMessagesError("Failed to load recipient profile details.");
-        }
-    };
-
-    fetchRecipientProfile();
-
-
-
-  }, [currentUser, recipientUserId, authLoading, db]);
-
-
-  useEffect(() => {
-    if (!conversationId || !currentUser?.uid) {
-       if (!conversationId && !authLoading) {
-           setMessagesLoading(false);
-       }
-       return;
+    if (!isAuthenticated || !currentUser?.uid) {
+      setError('You must be logged in to view messages.');
+      setLoading(false);
+      setConversationLoading(false);
+      return;
     }
 
-    console.log(`MessagesPage: Setting up message listener for conversation: ${conversationId}`);
-    setMessagesLoading(true);
+    setConversationLoading(true);
+    setLoading(true);
+    setError(null);
 
-    const messagesCollectionRef = collection(db, 'conversations', conversationId, 'messages');
+    const loadConversationData = async () => {
+      try {
+        const convRef = doc(db, 'conversations', paramConversationId);
+        const convSnap = await getDoc(convRef);
 
-    const messagesQuery = query(messagesCollectionRef, orderBy('createdAt', 'asc'));
+        if (!convSnap.exists()) {
+          throw new Error('Conversation not found.');
+        }
+
+        const convData = { id: convSnap.id, ...convSnap.data() } as Conversation;
+
+        if (!convData.participants.includes(currentUser.uid)) {
+          throw new Error('You are not a participant in this conversation.');
+        }
+
+        setConversation(convData);
+
+        const recipientId = convData.participants.find((id) => id !== currentUser.uid);
+        if (recipientId) {
+          const recipientRef = doc(db, 'users', recipientId);
+          const recipientSnap = await getDoc(recipientRef);
+          setRecipient(recipientSnap.exists() ? 
+            { id: recipientSnap.id, ...recipientSnap.data() } as UserProfile : 
+            null
+          );
+        } else {
+          setRecipient(null);
+        }
+
+        if (convData.errandId) {
+          const errandRef = doc(db, 'errands', convData.errandId);
+          const errandSnap = await getDoc(errandRef);
+          setErrand(errandSnap.exists() ? 
+            { id: errandSnap.id, ...errandSnap.data() } as Errand : 
+            null
+          );
+        } else {
+          setErrand(null);
+        }
+
+      } catch (err) {
+        console.error('Error loading conversation data:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load conversation.');
+        setConversation(null);
+        setRecipient(null);
+        setErrand(null);
+        setMessages([]);
+      } finally {
+        setConversationLoading(false);
+        setLoading(false);
+      }
+    };
+
+    loadConversationData();
+  }, [paramConversationId, currentUser, isAuthenticated]);
+
+  // Listen for messages in the current conversation
+  useEffect(() => {
+    if (!conversation?.id || !isAuthenticated || !currentUser?.uid) {
+      setMessages([]);
+      setUnreadCount(0);
+      return;
+    }
+
+    const messagesQuery = query(
+      collection(db, 'conversations', conversation.id, 'messages'),
+      orderBy('createdAt', 'asc')
+    );
 
     const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
-      console.log(`MessagesPage: Received new message snapshot (${snapshot.docs.length} documents).`);
-      const fetchedMessages: Message[] = snapshot.docs.map(doc => {
-        
-        const data = doc.data() as Omit<Message, 'id'>;
-        return {
-          id: doc.id, // Explicitly use the document ID
-          ...data, // Spread the rest of the data fields
-          senderUid: data.senderUid ?? '', recipientUid: data.recipientUid ?? '',
-          text: data.text ?? '', createdAt: data.createdAt,
-          conversationId: data.conversationId ?? conversationId,
-          isRead: data.isRead ?? false, mediaUrl: data.mediaUrl ?? '',
-        };
-      });
+      const msgs = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }) as Message);
 
-      setMessages(fetchedMessages);
-      setMessagesLoading(false);
-      if (messagesError) setMessagesError(null);
+      setMessages(msgs);
 
-      setTimeout(() => {
-          messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-      }, 50);
+      if (isAuthenticated && currentUser?.uid) {
+        const newUnread = msgs.filter(
+          (msg) => msg.senderId !== currentUser.uid && !msg.isRead
+        ).length;
 
-    }, (error) => {
-      console.error('MessagesPage: Real-time message listener error:', error);
-      setMessagesLoading(false);
-      setMessagesError('Failed to load messages. Please try again.');
+        const initialLoad = messages.length === 0 && msgs.length > 0;
+
+        if (newUnread > unreadCount && !initialLoad && Notification.permission === 'granted') {
+          const latestUnreadMsg = msgs
+            .filter(msg => msg.senderId !== currentUser.uid && !msg.isRead)
+            .sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0))[0];
+
+          if (latestUnreadMsg) {
+            new Notification(
+              `New Message from @${recipient?.username || 'Someone'}`,
+              {
+                body: latestUnreadMsg.content.length > 100 ? 
+                  latestUnreadMsg.content.substring(0, 97) + '...' : 
+                  latestUnreadMsg.content,
+                icon: recipient?.avatarUrl || '/favicon.ico',
+              }
+            );
+          }
+        }
+
+        setUnreadCount(newUnread);
+      }
+
+      scrollToBottom();
+    }, (err) => {
+      console.error('Error listening to messages:', err);
+      setError('Failed to load messages.');
     });
 
-    return () => {
-        console.log("MessagesPage: Cleaning up Firestore message listener.");
-        unsubscribe();
-        setMessages([]);
-        setMessagesError(null);
-        setMessagesLoading(true);
+    return () => unsubscribe();
+  }, [conversation, currentUser, recipient, isAuthenticated, messages.length, unreadCount, scrollToBottom]);
+
+  // Load conversations list when no specific conversation is selected
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser?.uid || paramConversationId) {
+      setConversationsList([]);
+      setConversationsListLoading(false);
+      return;
+    }
+
+    setConversationsListLoading(true);
+
+    const fetchConversationsList = async () => {
+      try {
+        const q = query(
+          collection(db, 'conversations'),
+          where('participants', 'array-contains', currentUser.uid),
+          orderBy('lastMessageTimestamp', 'desc')
+        );
+
+        const querySnapshot = await getDocs(q);
+        const conversations: Conversation[] = [];
+        const participantIdsToFetch: string[] = [];
+
+        querySnapshot.forEach((doc) => {
+          const convData = { id: doc.id, ...doc.data() } as Conversation;
+          conversations.push(convData);
+
+          const otherParticipantId = convData.participants.find(uid => uid !== currentUser.uid);
+          if (otherParticipantId && !participantIdsToFetch.includes(otherParticipantId)) {
+            participantIdsToFetch.push(otherParticipantId);
+          }
+        });
+
+        const participantProfiles: Record<string, UserProfile> = {};
+        if (participantIdsToFetch.length > 0) {
+          const batches = [];
+          for (let i = 0; i < participantIdsToFetch.length; i += 10) {
+            batches.push(participantIdsToFetch.slice(i, i + 10));
+          }
+
+          for (const batch of batches) {
+            if (batch.length > 0) {
+              const usersQuery = query(
+                collection(db, 'users'),
+                where(documentId(), 'in', batch)
+              );
+              const usersSnapshot = await getDocs(usersQuery);
+              usersSnapshot.forEach(doc => {
+                participantProfiles[doc.id] = { id: doc.id, ...doc.data() } as UserProfile;
+              });
+            }
+          }
+        }
+
+        const conversationsWithRecipients = conversations.map(conv => {
+          const otherParticipantId = conv.participants.find(uid => uid !== currentUser.uid);
+          return {
+            ...conv,
+            recipientProfile: otherParticipantId ? participantProfiles[otherParticipantId] : null,
+            isUnread: conv.readStatus?.[currentUser.uid] === false,
+          } as ConversationListItem;
+        });
+
+        setConversationsList(conversationsWithRecipients);
+        setError(null);
+      } catch (err) {
+        console.error('Error fetching conversations list:', err);
+        setError('Failed to load conversations.');
+        setConversationsList([]);
+      } finally {
+        setConversationsListLoading(false);
+        setLoading(false);
+      }
     };
 
-  }, [conversationId, currentUser?.uid, db]);
+    fetchConversationsList();
+  }, [isAuthenticated, currentUser?.uid, paramConversationId]);
 
-
-  const handleSendMessage = async (e: FormEvent) => {
-    e.preventDefault();
-
-    const textToSend = newMessageText.trim();
-    if (!textToSend) {
-      setSendingError("Message cannot be empty.");
+  const markMessagesAsRead = useCallback(async () => {
+    if (!isAuthenticated || !conversation?.id || !currentUser?.uid || messages.length === 0) {
       return;
     }
-    if (!currentUser?.uid || !recipientUserId || !conversationId) {
-      console.error("MessagesPage: Cannot send message. Missing user info or conversation ID.");
-      setSendingError("Cannot send message. Please try reloading.");
-      return;
-    }
-
-    setSending(true);
-    setSendingError(null);
-    setSendingSuccess(false);
 
     try {
-      const conversationRef = doc(db, 'conversations', conversationId);
-      const conversationSnap = await getDoc(conversationRef);
+      const messagesQuery = query(
+        collection(db, 'conversations', conversation.id, 'messages'),
+        where('senderId', '!=', currentUser.uid),
+        where('isRead', '==', false)
+      );
+      const snapshot = await getDocs(messagesQuery);
 
-      const conversationWriteData: ConversationWriteData = {
-        participantUids: [currentUser.uid, recipientUserId].sort(),
-        createdAt: conversationSnap.exists() ? (conversationSnap.data() as Conversation).createdAt : serverTimestamp(),
-        lastMessageText: textToSend,
-        lastMessageTimestamp: serverTimestamp(),
-        readStatus: { [currentUser.uid]: true, [recipientUserId]: false },
-      };
+      if (!snapshot.empty) {
+        const updates = snapshot.docs.map((msgDoc) => {
+          const msgRef = doc(db, 'conversations', conversation.id, 'messages', msgDoc.id);
+          return updateDoc(msgRef, { isRead: true });
+        });
 
-      await setDoc(conversationRef, conversationWriteData, { merge: true });
+        await Promise.all(updates);
 
-      const messagesCollectionRef = collection(db, 'conversations', conversationId, 'messages');
-      const newMessage: MessageWriteData = {
-        conversationId: conversationId,
-        senderUid: currentUser.uid,
-        recipientUid: recipientUserId,
-        text: textToSend,
+        const convRef = doc(db, 'conversations', conversation.id);
+        const convSnap = await getDoc(convRef);
+        if (convSnap.exists() && convSnap.data()?.readStatus?.[currentUser.uid] === false) {
+          await updateDoc(convRef, {
+            [`readStatus.${currentUser.uid}`]: true,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Error marking messages as read:', err);
+    }
+  }, [conversation, currentUser, isAuthenticated, messages]);
+
+  useEffect(() => {
+    if (messages.length > 0 && isAuthenticated && currentUser?.uid) {
+      markMessagesAsRead();
+    }
+  }, [messages, markMessagesAsRead, isAuthenticated, currentUser?.uid]);
+
+  useEffect(() => {
+  if (!recipient?.uid || !currentUser?.uid) {
+    setError("Missing recipient or sender information.");
+    return;
+  }
+  if (recipient?.uid === currentUser.uid) {
+    setError("You cannot send a message to yourself.");
+  }
+}, [recipient, currentUser]);
+
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!isAuthenticated || !currentUser || !newMessage.trim()) {
+      setError('You must be logged in and type a message to send.');
+      return;
+    }
+    if (!conversation?.id) {
+      setError('Cannot send message: No conversation selected.');
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, 'conversations', conversation.id, 'messages'), {
+        senderId: currentUser.uid,
+        content: newMessage.trim(),
         createdAt: serverTimestamp(),
         isRead: false,
-      };
+        type: 'standard',
+      });
 
-      await addDoc(messagesCollectionRef, newMessage);
-      console.log("MessagesPage: Message sent successfully.");
+      await updateDoc(doc(db, 'conversations', conversation.id), {
+        lastMessage: { content: newMessage.trim(), type: 'standard' },
+        lastMessageTimestamp: serverTimestamp(),
+        [`readStatus.${currentUser.uid}`]: true,
+        ...(recipient?.id ? { [`readStatus.${recipient.id}`]: false } : {}),
+      });
 
-      setNewMessageText('');
-      setSendingSuccess(true);
-
-    } catch (error) {
-      console.error('MessagesPage: Error sending message:', error);
-      setSendingError('Failed to send message. Please try again.');
-      setSendingSuccess(false);
-    } finally {
-      setSending(false);
-      if (sendingSuccess) {
-         setTimeout(() => setSendingSuccess(false), 2000);
-      }
+      setNewMessage('');
+    } catch (err) {
+      console.error('Error sending message:', err);
+      setError('Failed to send message. Please try again.');
     }
   };
 
+  const showConversationList = !paramConversationId;
 
+  if (loading) {
+    const loadingMessage = conversationsListLoading || (paramConversationId && conversationLoading)
+      ? (conversationsListLoading ? 'Loading conversations list...' : 'Loading conversation...')
+      : 'Loading...';
 
-  if (authLoading) {
     return (
-      <div className="container my-5 text-center">
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Loading...</span>
-        </div>
-        <p className="mt-2 text-muted">Loading user session...</p>
+      <div className="container py-5 text-center">
+        <Spinner animation="border" variant={theme === 'dark' ? 'light' : 'primary'} />
+        <p className="mt-2 text-muted">{loadingMessage}</p>
       </div>
     );
   }
 
-  if (!currentUser || !recipientUserId || !conversationId) {
-       return (
-           <div className="container my-5">
-               <div className="alert alert-danger text-center">
-                   {messagesError || "Cannot display message page. Ensure you are logged in and have a valid recipient."}
-               </div>
-           </div>
-       );
+  if (error) {
+    return (
+      <Container className="my-5">
+        <Alert variant="danger">
+          {error}
+          <div className="mt-3">
+            {paramConversationId && (
+              <Button variant="primary" className="me-2" onClick={() => navigate('/messages')}>
+                Back to Conversations
+              </Button>
+            )}
+            <Button variant="secondary" onClick={() => window.location.reload()}>
+              Try Again
+            </Button>
+          </div>
+        </Alert>
+      </Container>
+    );
+  }
+
+  if (showConversationList) {
+    return (
+      <Container className="py-3">
+        <h3 className={`mb-4 ${theme === 'dark' ? 'text-light' : ''}`}>Your Conversations</h3>
+        {conversationsList.length === 0 ? (
+          <Alert variant="info" className="text-center">
+            You don't have any conversations yet. Find an errand or user to start one!
+            <div className="mt-2">
+              <Link to="/errands" className="alert-link">Browse Errands</Link>
+            </div>
+          </Alert>
+        ) : (
+          <ListGroup>
+            {conversationsList.map((conv) => (
+              <ListGroup.Item
+                key={conv.id}
+                action
+                onClick={() => navigate(`/messages/${conv.id}`)}
+                className={`d-flex justify-content-between align-items-center ${theme === 'dark' ? 'bg-secondary text-light' : ''} ${conv.isUnread ? 'list-group-item-primary' : ''}`}
+              >
+                <div className="d-flex align-items-center">
+                  <Image
+                    src={conv.recipientProfile?.avatarUrl || '/default-avatar.png'}
+                    alt={conv.recipientProfile?.username || 'Unknown User'}
+                    roundedCircle
+                    style={{ width: '40px', height: '40px', objectFit: 'cover', marginRight: '15px' }}
+                  />
+                  <div>
+                    <h5 className={`mb-1 h6 ${theme === 'dark' ? 'text-light' : ''}`}>
+                      @{conv.recipientProfile?.username || 'Unknown User'}
+                      {conv.isUnread && <Badge bg="danger" pill className="ms-2"> </Badge>}
+                    </h5>
+                    <p className={`mb-1 text-muted ${conv.isUnread ? 'fw-bold' : ''}`}>
+                      {typeof conv.lastMessage === 'object' && conv.lastMessage !== null && 
+                        typeof (conv.lastMessage as { content?: string }).content === 'string' ?
+                        ((conv.lastMessage as { content: string }).content.length > 50 ? 
+                          (conv.lastMessage as { content: string }).content.substring(0, 47) + '...' : 
+                          (conv.lastMessage as { content: string }).content)
+                        : typeof conv.lastMessage === 'string' && conv.lastMessage.length > 0 ?
+                          (conv.lastMessage.length > 50 ? 
+                            conv.lastMessage.substring(0, 47) + '...' : 
+                            conv.lastMessage)
+                        : 'Start of conversation'}
+                    </p>
+                  </div>
+                </div>
+                <div>
+                  <small className="text-muted me-2">
+                    {conv.lastMessageTimestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </small>
+                </div>
+              </ListGroup.Item>
+            ))}
+          </ListGroup>
+        )}
+      </Container>
+    );
   }
 
   return (
-    <div className="container my-3 d-flex flex-column vh-100">
-      <div className="card shadow-sm p-3 mb-3">
-          {recipientProfile ? (
-              <div className="d-flex align-items-center">
-                  {recipientProfile.avatarUrl && (
-                      <img src={recipientProfile.avatarUrl} alt={`${recipientProfile.username}'s avatar`}
-                           className="rounded-circle me-3" style={{ width: '40px', height: '40px', objectFit: 'cover' }} />
-                  )}
-                  <h5>Chat with @{recipientProfile.username || recipientProfile.name || 'Unnamed User'}</h5>
-              </div>
-          ) : (
-              <h5>Loading chat...</h5>
-          )}
-      </div>
-
-      <div className="flex-grow-1 overflow-auto mb-3 border rounded p-3">
-        {messagesLoading ? (
-          <p className="text-center">Loading messages...</p>
-        ) : messagesError ? (
-          <div className="alert alert-danger text-center">{messagesError}</div>
-        ) : messages.length === 0 ? (
-          <p className="text-center text-muted">Start a conversation!</p>
-        ) : (
-          <div>
-            {/* Inside MessagesPage.tsx, within the messages list div */}
-{messages.map((message) => (
-  <MessageItem
-    key={message.id} // Crucially use the message document ID as the key
-    message={message} // Pass the message data object
-    isSentByCurrentUser={message.senderUid === currentUser?.uid} // Calculate if the current user sent it
-    // Pass currentUser if needed inside MessageItem for other logic
-    // currentUser={currentUser}
-  />
-))}
-<div ref={messagesEndRef} /> {/* The auto-scroll ref */}
-
+    <div className="container-fluid py-3 d-flex flex-column" style={{ minHeight: 'calc(100vh - 56px)' }}>
+      <div className="d-flex align-items-center mb-3">
+        <Button
+          variant="outline-secondary"
+          size="sm"
+          className="me-2"
+          onClick={() => navigate('/messages')}
+        >
+          ←
+        </Button>
+        {recipient && (
+          <div className="d-flex align-items-center">
+            <Image
+              src={recipient.avatarUrl || '/default-avatar.png'}
+              alt={recipient.username}
+              roundedCircle
+              className="me-2"
+              style={{ width: '32px', height: '32px', objectFit: 'cover' }}
+            />
+            <Link to={`/profile/${recipient.username}`} className={`h4 mb-0 text-decoration-none ${theme === 'dark' ? 'text-light' : 'text-dark'}`}>
+              @{recipient.username}
+            </Link>
+            {unreadCount > 0 && (
+              <Badge bg="danger" className="ms-2">
+                {unreadCount}
+              </Badge>
+            )}
           </div>
         )}
       </div>
 
-      <div className="card p-3">
-          <form onSubmit={handleSendMessage} className="d-flex">
-              <textarea
-                className="form-control me-2 flex-grow-1"
-                rows={1}
-                placeholder="Type a message..."
-                value={newMessageText}
-                onChange={(e) => setNewMessageText(e.target.value)}
-                disabled={!conversationId || sending}
-                onKeyPress={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault(); // Prevent default line break
-                        handleSendMessage(e as any); // Call the send function
-                    }
-                }}
-              />
-              {/* --- Continued in Part 4 --- */}
-// src/pages/MessagesPage.tsx
-// --- Continued from Part 3 ---
+      {errand && (
+        <Alert variant="info" className="mb-3">
+          Related Errand: <strong>{errand.title}</strong> (Status: {errand.status})
+          {errand.id && (
+            <Link to={`/errands/${errand.id}`} className="alert-link ms-2">View Details</Link>
+          )}
+        </Alert>
+      )}
 
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={!newMessageText.trim() || sending || !conversationId} // Disable if empty, sending, or no conv ID
-              >
-                {sending ? (
-                   <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                ) : (
-                  'Send'
-                )}
-              </button>
-          </form>
-          {sendingError && <small className="text-danger mt-2 d-block">{sendingError}</small>}
-           {sendingSuccess && <small className="text-success mt-2 d-block">Message sent!</small>}
+      <div
+        className="flex-grow-1 overflow-auto mb-3 p-3 rounded"
+        style={{ backgroundColor: theme === 'dark' ? '#2c2c2c' : '#f8f9fa' }}
+      >
+        {messages.length === 0 ? (
+          <div className="text-center text-muted py-5">
+            No messages yet. {isAuthenticated ? 'Start the conversation!' : 'Log in to send messages.'}
+          </div>
+        ) : (
+          <div className="d-flex flex-column gap-2">
+            {messages.map((message) => (
+              <MessageItem
+                key={message.id}
+                message={message}
+                currentUserId={currentUser?.uid || ''}
+                recipientProfile={recipient ?? undefined}
+              />
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+        )}
       </div>
+
+      {isAuthenticated ? (
+        <Form onSubmit={handleSendMessage}>
+          <InputGroup>
+            <Form.Control
+              type="text"
+              placeholder="Type a message..."
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+            />
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={!newMessage.trim()}
+            >
+              Send
+            </Button>
+          </InputGroup>
+        </Form>
+      ) : (
+        <Alert variant="warning" className="mb-0">
+          Please <Link to="/login">log in</Link> to send messages.
+        </Alert>
+      )}
     </div>
   );
 };
 
-// Export the component
 export default MessagesPage;

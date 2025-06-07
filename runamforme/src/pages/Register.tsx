@@ -1,276 +1,557 @@
-// src/pages/Register.tsx - Part 1 of 2
-import React, { useState } from 'react'; // Import React and useState hook
-// Import Link and useNavigate from react-router-dom for navigation
+import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-// Import Firebase Auth function for creating users with email/password
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-// Import Firestore functions for adding and querying documents
-import { doc, setDoc, serverTimestamp, collection, query, where, getDocs,  } from 'firebase/firestore'; // Added FieldValue although not strictly needed for '0' initialization
-// Import the auth and db instances from your config file
-import { auth } from '../firebase/config';
-import { db } from '../firebase/config';
-// Import the useAuth hook from your AuthContext to check auth state
+import { Helmet } from 'react-helmet-async';
+import { RecaptchaVerifier, type ConfirmationResult, type AuthError } from 'firebase/auth';
+import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
-// Import the UserProfileWriteData type from your types file
-import type { UserProfileWriteData } from '../types'; // <-- Ensure this import is correct
+import type { UserProfileWriteData } from '../types';
+import { Button, Card, Form, Alert, Spinner, Container, Row, Col } from 'react-bootstrap';
+
+const restrictedWords = new Set([
+  'apple', 'money', 'agent', 'white', 'black', 'green', 'sweet', 'store', 'hello', 'world'
+]);
+
+function isUsernameRestricted(username: string): boolean {
+  if (!username || username.length < 6) return true;
+  if (/agent/i.test(username)) return true;
+  if (restrictedWords.has(username.toLowerCase())) return true;
+  return false;
+}
 
 const Register: React.FC = () => {
-  // State for form inputs
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [username, setUsername] = useState(''); // State for username input
-
-  // State for registration process feedback
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false); // Loading state for the registration process
-
   const navigate = useNavigate();
-  // Get the current user and the initial auth loading state from the context
-  const { currentUser, loading: authLoading } = useAuth();
+  const { currentUser, loading: authLoading, register, loginWithGoogle, loginWithPhone } = useAuth();
+  const recaptchaVerifier = useRef<RecaptchaVerifier | null>(null);
+  const confirmationResult = useRef<ConfirmationResult | null>(null);
+  const [phoneData, setPhoneData] = useState<{ name: string; username: string }>({ name: '', username: '' });
 
-  // If user is already logged in (and auth state is done loading), redirect them away from the registration page.
-  if (!authLoading && currentUser) {
-    navigate("/dashboard", { replace: true });
-    return null; // Return null while redirecting
-  }
+  const [formData, setFormData] = useState({
+    name: '',
+    username: '',
+    email: '',
+    password: '',
+    phoneNumber: '',
+    otp: '',
+  });
+  const [otpSent, setOtpSent] = useState(false);
+  const [loading, setLoading] = useState({
+    email: false,
+    google: false,
+    phone: false,
+  });
+  const [error, setError] = useState<string | null>(null);
 
-   // While the initial authentication state is loading, show a loading indicator.
-   if (authLoading) {
-    return (
-       <div className="container my-5 text-center">
-          <div>Checking user session...</div> {/* Consistent loading message styling */}
-       </div>
-    );
-   }
+  const [showGoogleDetails, setShowGoogleDetails] = useState(false);
+const [googleForm, setGoogleForm] = useState({
+  name: '',
+  username: '',
+  acceptedTerms: false,
+});
+const [googleError, setGoogleError] = useState<string | null>(null);
 
-  // Basic client-side username validation (more robust checks needed backend)
-  const validateUsername = (inputUsername: string) => {
-      if (!inputUsername || !inputUsername.trim()) return "Username is required."; // Check for empty or whitespace
-      if (inputUsername.trim().length < 3) return "Username must be at least 3 characters long.";
-      // Allows letters (uppercase and lowercase), numbers, and underscores
-      if (!/^[a-zA-Z0-9_]+$/.test(inputUsername.trim())) return "Username can only contain letters, numbers, and underscores.";
-      // Add other checks as needed (e.g., no offensive words - best done backend)
-      return null; // No errors
-  }
 
-  // Handle Registration form submission
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); // Prevent default browser form submission
-
-    // Reset loading and error states before the action
-    setLoading(true);
-    setError(null); // Clear previous errors
-
-    // Client-side validation for username
-    const usernameError = validateUsername(username);
-    if(usernameError) {
-        setError(usernameError);
-        setLoading(false);
-        return; // Stop submission if client-side validation fails
+  useEffect(() => {
+    if (!authLoading && currentUser) {
+      navigate('/dashboard', { replace: true });
     }
+  }, [authLoading, currentUser, navigate]);
 
-    // Get the lowercase, trimmed username for consistency
-    const processedUsername = username.trim().toLowerCase();
-
-    try {
-      // --- Client-side Check for Username Uniqueness (Crucial!) ---
-      // This check provides immediate feedback to the user but is NOT secure or guaranteed unique.
-      // A Cloud Function triggered *before* profile creation (using a transaction)
-      // is the secure and atomic way to ensure true uniqueness and avoid race conditions.
-      // For now, we include this client-side check as a basic filter before attempting Auth creation.
-      const usernameQuery = query(collection(db, 'users'), where('username', '==', processedUsername));
-      const usernameSnapshot = await getDocs(usernameQuery);
-      if (!usernameSnapshot.empty) {
-          setError(`Username '@${processedUsername}' is already taken. Please choose a different one.`);
-          setLoading(false);
-          return; // Stop registration if username exists based on this check
-      }
-       // IMPORTANT: A race condition is still possible here! The secure check must be server-side.
-      // ---------------------------------------------------------
-
-
-      // Create the user in Firebase Authentication
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const newUser = userCredential.user;
-
-      // Create the corresponding user profile document in Firestore
-      // The document ID will be the user's Firebase Auth UID
-      const userProfileData: UserProfileWriteData = { // <-- Using the correct type here
-        uid: newUser.uid, // Set the uid field within the document data
-        name: name.trim(), // Store trimmed name
-        email: newUser.email || email.trim(), // Use the email from Auth user if available (more reliable)
-        username: processedUsername, // Store the lowercase, trimmed username
-        userType: 'requester', // Default user type on registration
-        createdAt: serverTimestamp(), // Use serverTimestamp for creation time (FieldValue type)
-        followersCount: 0, // Initialize counters to 0 (number type, which is allowed by FieldValue union)
-        followingCount: 0,
-        likes: 0,
-        // Add other optional profile fields here initialized to default values or undefined
-        bio: '', // Example: Initialize bio as an empty string
-        // avatarUrl: undefined, // Example: leave undefined initially
-        isVerified: false, // Example: initialize as false
-      };
-
-      // Set the document in the 'users' collection with the user's UID as the document ID
-      await setDoc(doc(db, 'users', newUser.uid), userProfileData);
-
-      // Success! The onAuthStateChanged listener in AuthContext will detect this new user
-      // and update the global currentUser state. The redirect logic at the top
-      // of this component will then handle navigation to the dashboard.
-      // No need to call navigate here.
-
-    } catch (err: any) { // Catch the error (using `any` for simplicity with Firebase Auth/Firestore errors)
-      console.error("Registration error:", err);
-      setLoading(false); // Stop loading on error
-
-      // Display user-friendly error messages based on Firebase Auth/Firestore error codes
-      if (err.code) {
-        switch (err.code) {
-            case 'auth/email-already-in-use':
-                setError("This email address is already in use. Try logging in.");
-                break;
-            case 'auth/invalid-email':
-                setError("Invalid email address format.");
-                break;
-            case 'auth/operation-not-allowed':
-                setError("Email/password sign-up is disabled. Please contact support."); // Should be enabled in Firebase Console
-                break;
-             case 'auth/weak-password':
-                setError("Password is too weak. Please choose a stronger password (minimum 6 characters).");
-                break;
-            case 'firestore/unavailable': // Example Firestore error
-            case 'firestore/internal':
-                setError("Database error during profile creation. Please try again.");
-                break;
-            // Add more cases for other specific errors if needed
-            default:
-                // Fallback for unhandled Firebase errors
-                if (err.message && err.message.startsWith("Firebase: Error")) {
-                     setError(err.message.replace("Firebase: Error", "Registration failed"));
-                } else {
-                    setError("An unexpected error occurred during registration.");
-                }
-        }
-      } else {
-        // Handle non-Firebase errors
-        setError('An unexpected error occurred during registration.');
-      }
-    }
-    // On successful registration, the component will unmount due to navigation.
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: name === 'username' ? value.toLowerCase() : value,
+    }));
   };
 
-  // This is the end of Part 1. The render return statement and JSX will be in Part 2.
-// src/pages/Register.tsx - Part 2 of 2
-// ... (Code from Part 1 above - including imports, state, authLoading check, validateUsername, handleSubmit functions)
+  const validateUsername = (username: string) => {
+    if (!username.trim()) return 'Username is required';
+    if (isUsernameRestricted(username)) return 'Username is restricted or too short (5+ letters, avoid common words like "agent")';
+    if (username.length < 6) return 'Username must be at least 6 characters';
+    if (!/^[a-z0-9_]+$/.test(username)) return 'Only lowercase letters, numbers, and underscores';
+    return null;
+  };
 
-  // If we reach here, authLoading is false, and there is no currentUser, so render the registration form.
+  const checkUsernameUnique = async (username: string) => {
+    const q = query(collection(db, 'users'), where('username', '==', username));
+    const snapshot = await getDocs(q);
+    return snapshot.empty ? null : 'Username is already taken';
+  };
+
+  const handleError = (err: AuthError, authMethod: string) => {
+    let errorMessage = `${authMethod} failed. Please try again.`;
+    switch (err.code) {
+      case 'auth/email-already-in-use':
+        errorMessage = 'Email already in use';
+        break;
+      case 'auth/invalid-email':
+        errorMessage = 'Invalid email format';
+        break;
+      case 'auth/weak-password':
+        errorMessage = 'Password must be at least 6 characters';
+        break;
+      case 'auth/invalid-phone-number':
+        errorMessage = 'Invalid phone number format';
+        break;
+      case 'auth/invalid-verification-code':
+        errorMessage = 'Invalid OTP code';
+        break;
+      case 'auth/popup-closed-by-user':
+      case 'auth/cancelled-popup-request':
+        return;
+    }
+    setError(errorMessage);
+  };
+
+  const handleEmailRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(prev => ({ ...prev, email: true }));
+    setError(null);
+
+    const usernameError = validateUsername(formData.username);
+    if (usernameError) {
+      setError(usernameError);
+      setLoading(prev => ({ ...prev, email: false }));
+      return;
+    }
+
+    const uniqueError = await checkUsernameUnique(formData.username);
+    if (uniqueError) {
+      setError(uniqueError);
+      setLoading(prev => ({ ...prev, email: false }));
+      return;
+    }
+
+    try {
+      await register(formData.email, formData.password, formData.name, formData.username);
+      navigate('/dashboard');
+    } catch (err) {
+      handleError(err as AuthError, 'Email registration');
+    } finally {
+      setLoading(prev => ({ ...prev, email: false }));
+    }
+  };
+
+  const handleGoogleRegister = async () => {
+  setLoading(prev => ({ ...prev, google: true }));
+  setError(null);
+
+
+  try {
+    await loginWithGoogle();
+    const uid = auth.currentUser?.uid;
+    
+if (!uid) return setGoogleError('User not authenticated');
+
+const userRef = doc(db, 'users', uid!);
+const snap = await getDoc(userRef);
+
+
+    // If profile already exists, navigate
+    if (snap.exists()) {
+      navigate('/dashboard');
+    } else {
+      // Show username + terms form
+      setShowGoogleDetails(true);
+    }
+  } catch (err) {
+    handleError(err as AuthError, 'Google registration');
+  } finally {
+    setLoading(prev => ({ ...prev, google: false }));
+  }
+};
+
+
+  const handlePhoneRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(prev => ({ ...prev, phone: true }));
+    setError(null);
+
+    if (!otpSent) {
+      const usernameError = validateUsername(formData.username);
+      if (usernameError) {
+        setError(usernameError);
+        setLoading(prev => ({ ...prev, phone: false }));
+        return;
+      }
+
+      const uniqueError = await checkUsernameUnique(formData.username);
+      if (uniqueError) {
+        setError(uniqueError);
+        setLoading(prev => ({ ...prev, phone: false }));
+        return;
+      }
+
+      try {
+        if (!recaptchaVerifier.current) {
+          recaptchaVerifier.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
+            size: 'invisible',
+          });
+        }
+        const result = await loginWithPhone(formData.phoneNumber, recaptchaVerifier.current);
+        confirmationResult.current = result;
+        setPhoneData({ name: formData.name, username: formData.username });
+        setOtpSent(true);
+      } catch (err) {
+        handleError(err as AuthError, 'Phone registration');
+        recaptchaVerifier.current?.clear();
+        recaptchaVerifier.current = null;
+        setLoading(prev => ({ ...prev, phone: false }));
+      }
+    } else if (confirmationResult.current) {
+      try {
+        const userCredential = await confirmationResult.current.confirm(formData.otp);
+        const userRef = doc(db, 'users', userCredential.user.uid);
+        const profileData: UserProfileWriteData = {
+          name: phoneData.name || 'New User',
+          username: phoneData.username,
+          searchableUsername: phoneData.username.toLowerCase(),
+          email: '',
+          userType: 'both',
+          createdAt: serverTimestamp(),
+          followersCount: 0,
+          followingCount: 0,
+          likes: 0,
+          bio: '',
+          isVerified: false,
+          walletBalance: 0,
+          avatarUrl: '',
+        };
+        await setDoc(userRef, profileData, { merge: true });
+        navigate('/dashboard');
+      } catch (err) {
+        handleError(err as AuthError, 'Phone OTP verification');
+        recaptchaVerifier.current?.clear();
+        recaptchaVerifier.current = null;
+        setOtpSent(false);
+      } finally {
+        setLoading(prev => ({ ...prev, phone: false }));
+      }
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <Container className="d-flex justify-content-center align-items-center min-vh-100">
+        <Spinner animation="border" variant="primary" role="status">
+          <span className="visually-hidden">Loading...</span>
+        </Spinner>
+      </Container>
+    );
+  }
+
   return (
-    // Use Bootstrap container and grid for layout and centering
-    <div className="container my-5"> {/* Add vertical margin */}
-      <div className="row justify-content-center"> {/* Center the column horizontally */}
-        <div className="col-md-8 col-lg-6 col-xl-5"> {/* Responsive column width (consistent with Login) */}
-          {/* Main Card wrapping the registration form */}
-          <div className="card shadow p-4 p-md-5"> {/* Add shadow and padding (more on medium+ screens) */}
-            <h2 className="card-title text-center mb-4">Create Your RunAmForMe Account</h2> {/* Centered title with bottom margin */}
+    <Container className="py-5">
+      <Helmet>
+        <title>Register - RunAmForMe</title>
+        <meta name="description" content="Create a free account to start posting or running errands on RunAmForMe." />
+      </Helmet>
+      <Row className="justify-content-center">
+        <Col md={8} lg={6} xl={5}>
+          <Card className="shadow-sm">
+            <Card.Body className="p-4 p-md-5">
+              <Card.Title className="text-center mb-4">
+                <h2>Create Your Account</h2>
+              </Card.Title>
 
-            {/* Display error message if registration failed */}
-            {error && <div className="alert alert-danger text-center" role="alert">{error}</div>}
+              {error && (
+                <Alert variant="danger" dismissible onClose={() => setError(null)}>
+                  {error}
+                </Alert>
+              )}
 
-            {/* --- Registration Form --- */}
-            <form onSubmit={handleSubmit}>
-              {/* Full Name Input */}
-              <div className="mb-3">
-                <label htmlFor="name" className="form-label">Full Name</label>
-                <input
-                  type="text"
-                  className="form-control" // Bootstrap form control styling
-                  id="name" // ID for label association
-                  value={name} // Controlled component: value from state
-                  onChange={(e) => setName(e.target.value)} // Update state on change
-                  required // HTML5 validation
-                  disabled={loading} // Disable input while registration is loading
-                />
-              </div>
-               {/* Username Input */}
-               <div className="mb-3">
-                <label htmlFor="username" className="form-label">Choose a Username</label> {/* New field for username */}
-                <input
-                  type="text"
-                  className="form-control" // Bootstrap form control styling
-                  id="username" // ID for label association
-                  value={username} // Controlled component: value from state
-                  onChange={(e) => setUsername(e.target.value.toLowerCase())} // Update state and convert to lowercase
-                  required // HTML5 validation
-                  disabled={loading} // Disable input while registration is loading
-                   aria-describedby="usernameHelp" // Accessibility
-                   // Optional: Add basic client-side validation feedback on blur
-                   onBlur={() => {
-                       const usernameError = validateUsername(username);
-                       if(usernameError) {
-                           setError(usernameError);
-                       } else {
-                            // If the current error displayed was the username error, clear it on valid blur
-                            // This prevents clearing other errors (like auth errors) prematurely.
-                            if (error === validateUsername(username)) {
-                                setError(null);
-                            }
-                       }
-                   }}
-                />
-                 {/* Help text for username format and uniqueness */}
-                 <div id="usernameHelp" className="form-text">Lowercase letters, numbers, and underscores only. This must be unique.</div>
-              </div>
-              {/* Email Input */}
-              <div className="mb-3">
-                <label htmlFor="emailRegister" className="form-label">Email address</label> {/* Specific ID to avoid conflict with Login if both are ever on the same page */}
-                <input
-                  type="email"
-                  className="form-control"
-                  id="emailRegister"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  disabled={loading}
-                />
-              </div>
-              {/* Password Input */}
-              <div className="mb-3">
-                <label htmlFor="passwordRegister" className="form-label">Create a Password</label> {/* Updated label, specific ID */}
-                <input
-                  type="password"
-                  className="form-control"
-                  id="passwordRegister"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  minLength={6} // Match Firebase Auth minimum password length
-                  required
-                  disabled={loading}
-                />
-              </div>
-              {/* Submit Button */}
-              <button
-                type="submit" // Button type is submit to trigger form onSubmit
-                className="btn btn-primary w-100 mt-3 d-flex align-items-center justify-content-center" // Primary button, full width, top margin, flexbox for centering
-                disabled={loading} // Disable button while registration is loading
+              <Form onSubmit={handleEmailRegister} className="mb-4">
+                <Form.Group className="mb-3">
+                  <Form.Label>Full Name</Form.Label>
+                  <Form.Control
+                    type="text"
+                    name="name"
+                    value={formData.name}
+                    onChange={handleChange}
+                    required
+                    disabled={Object.values(loading).some(Boolean)}
+                  />
+                </Form.Group>
+
+                <Form.Group className="mb-3">
+                  <Form.Label>Username</Form.Label>
+                  <Form.Control
+                    type="text"
+                    name="username"
+                    value={formData.username}
+                    onChange={handleChange}
+                    required
+                    disabled={Object.values(loading).some(Boolean)}
+                    onBlur={async () => {
+                      const error = validateUsername(formData.username);
+                      if (error) setError(error);
+                      else {
+                        const uniqueError = await checkUsernameUnique(formData.username);
+                        if (uniqueError) setError(uniqueError);
+                      }
+                    }}
+                  />
+                  <Form.Text className="text-muted">
+                    Lowercase letters, numbers, and underscores only
+                  </Form.Text>
+                </Form.Group>
+
+                <Form.Group className="mb-3">
+                  <Form.Label>Email</Form.Label>
+                  <Form.Control
+                    type="email"
+                    name="email"
+                    value={formData.email}
+                    onChange={handleChange}
+                    required
+                    disabled={Object.values(loading).some(Boolean)}
+                  />
+                </Form.Group>
+
+                <Form.Group className="mb-3">
+                  <Form.Label>Password</Form.Label>
+                  <Form.Control
+                    type="password"
+                    name="password"
+                    value={formData.password}
+                    onChange={handleChange}
+                    minLength={6}
+                    required
+                    disabled={Object.values(loading).some(Boolean)}
+                  />
+                  <Form.Text className="text-muted">
+                    At least 6 characters
+                  </Form.Text>
+                </Form.Group>
+
+                <Form.Group className="mb-3" controlId="termsConsentEmail">
+  <Form.Check
+    type="checkbox"
+    label={
+      <>
+        I agree to the <Link to="/terms">Terms & Conditions</Link>
+      </>
+    }
+    required
+  />
+</Form.Group>
+
+
+                <Button 
+                  variant="primary" 
+                  type="submit" 
+                  disabled={Object.values(loading).some(Boolean)}
+                  className="w-100 mb-3"
+                >
+                  {loading.email ? (
+                    <Spinner size="sm" animation="border" role="status" aria-hidden="true" />
+                  ) : (
+                    'Register with Email'
+                  )}
+                </Button>
+              </Form>
+
+              <div className="text-center text-muted mb-3">OR</div>
+
+              <Button 
+                variant="outline-secondary" 
+                onClick={handleGoogleRegister}
+                disabled={Object.values(loading).some(Boolean)}
+                className="w-100 mb-3"
               >
-                {/* Show spinner while registration is loading */}
-                {loading && <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>}
-                {/* Button text changes based on loading state */}
-                {loading ? 'Creating account...' : 'Register'}
-              </button>
-            </form>
-            {/* --- End Registration Form --- */}
+                {loading.google ? (
+                  <Spinner size="sm" animation="border" role="status" aria-hidden="true" />
+                ) : (
+                  'Continue with Google'
+                )}
+              </Button>
 
-            {/* Link to Login Page */}
-            <div className="mt-3 text-center"> {/* Add top margin, center text */}
-              Already have an account? <Link to="/login">Login</Link> {/* Link component for navigation */}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+              <Form onSubmit={handlePhoneRegister} className="mb-4">
+                <Form.Group className="mb-3">
+                  <Form.Label>Full Name</Form.Label>
+                  <Form.Control
+                    type="text"
+                    name="name"
+                    value={formData.name}
+                    onChange={handleChange}
+                    required
+                    disabled={otpSent || Object.values(loading).some(Boolean)}
+                  />
+                </Form.Group>
+
+                <Form.Group className="mb-3">
+                  <Form.Label>Username</Form.Label>
+                  <Form.Control
+                    type="text"
+                    name="username"
+                    value={formData.username}
+                    onChange={handleChange}
+                    required
+                    disabled={otpSent || Object.values(loading).some(Boolean)}
+                    onBlur={async () => {
+                      const error = validateUsername(formData.username);
+                      if (error) setError(error);
+                      else {
+                        const uniqueError = await checkUsernameUnique(formData.username);
+                        if (uniqueError) setError(uniqueError);
+                      }
+                    }}
+                  />
+                  <Form.Text className="text-muted">
+                    Lowercase letters, numbers, and underscores only
+                  </Form.Text>
+                </Form.Group>
+
+                <Form.Group className="mb-3">
+                  <Form.Label>Phone Number</Form.Label>
+                  <Form.Control
+                    type="tel"
+                    name="phoneNumber"
+                    value={formData.phoneNumber}
+                    onChange={handleChange}
+                    placeholder="+1234567890"
+                    required
+                    disabled={otpSent || Object.values(loading).some(Boolean)}
+                  />
+                </Form.Group>
+
+                <Form.Group className="mb-3" controlId="termsConsentPhone">
+  <Form.Check
+    type="checkbox"
+    label={
+      <>
+        I agree to the <Link to="/terms">Terms & Conditions</Link>
+      </>
+    }
+    required
+  />
+</Form.Group>
+
+
+                {otpSent && (
+                  <Form.Group className="mb-3">
+                    <Form.Label>OTP Code</Form.Label>
+                    <Form.Control
+                      type="text"
+                      name="otp"
+                      value={formData.otp}
+                      onChange={handleChange}
+                      required
+                      disabled={Object.values(loading).some(Boolean)}
+                    />
+                  </Form.Group>
+                  
+                )}
+
+                <div id="recaptcha-container" />
+
+                <Button 
+                  variant={otpSent ? "success" : "primary"}
+                  type="submit"
+                  disabled={Object.values(loading).some(Boolean)}
+                  className="w-100 mb-3"
+                >
+                  {loading.phone ? (
+                    <Spinner size="sm" animation="border" role="status" aria-hidden="true" />
+                  ) : (
+                    otpSent ? 'Verify OTP' : 'Register with Phone'
+                  )}
+                </Button>
+              </Form>
+{showGoogleDetails && (
+  <Form
+    onSubmit={async (e) => {
+      e.preventDefault();
+      const { name, username, acceptedTerms } = googleForm;
+
+      const usernameError = validateUsername(username);
+      if (usernameError) return setGoogleError(usernameError);
+      if (!acceptedTerms) return setGoogleError('You must accept the Terms & Conditions');
+
+      const uniqueError = await checkUsernameUnique(username);
+      if (uniqueError) return setGoogleError(uniqueError);
+
+      try {
+        const uid = auth.currentUser?.uid;
+        if (!uid) return setGoogleError('User not authenticated');
+        const userRef = doc(db, 'users', uid);
+        const profileData: UserProfileWriteData = {
+          name,
+          username,
+          searchableUsername: username.toLowerCase(),
+          email: auth.currentUser?.email || '',
+          userType: 'both',
+          createdAt: serverTimestamp(),
+          followersCount: 0,
+          followingCount: 0,
+          likes: 0,
+          bio: '',
+          isVerified: false,
+          walletBalance: 0,
+          avatarUrl: auth.currentUser?.photoURL || '',
+        };
+        await setDoc(userRef, profileData);
+        navigate('/dashboard');
+      } catch (err) {
+        console.error('Google profile creation failed:', err);
+        setGoogleError('Failed to save profile. Please try again.');
+      }
+    }}
+    className="mt-4"
+  >
+    <Form.Group className="mb-3">
+      <Form.Label>Full Name</Form.Label>
+      <Form.Control
+        type="text"
+        value={googleForm.name}
+        onChange={(e) => setGoogleForm((prev) => ({ ...prev, name: e.target.value }))}
+        required
+      />
+    </Form.Group>
+
+    <Form.Group className="mb-3">
+      <Form.Label>Username</Form.Label>
+      <Form.Control
+        type="text"
+        value={googleForm.username}
+        onChange={(e) => setGoogleForm((prev) => ({ ...prev, username: e.target.value.toLowerCase() }))}
+        required
+      />
+    </Form.Group>
+
+    <Form.Group className="mb-3">
+      <Form.Check
+        type="checkbox"
+        label={
+          <>
+            I agree to the <Link to="/terms">Terms & Conditions</Link>
+          </>
+        }
+        checked={googleForm.acceptedTerms}
+        onChange={(e) => setGoogleForm((prev) => ({ ...prev, acceptedTerms: e.target.checked }))}
+        required
+      />
+    </Form.Group>
+
+    {googleError && <Alert variant="danger">{googleError}</Alert>}
+
+    <Button type="submit" variant="primary" className="w-100">Complete Signup</Button>
+  </Form>
+)}
+
+              <div className="text-center mt-4">
+                Already have an account?{' '}
+                <Link to="/login" className="text-primary">
+                  Login
+                </Link>
+              </div>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+    </Container>
   );
-}
+};
 
 export default Register;

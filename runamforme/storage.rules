@@ -1,12 +1,308 @@
-rules_version = '2';
+- errandCategories [collection]
+  - {categoryId} [document]
+    - name: string
+    - description: string
+    - icon: string
+    - createdAt: timestamp
+    - updatedAt: timestamp
 
-// Craft rules based on data in your Firestore database
-// allow write: if firestore.get(
-//    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
-service firebase.storage {
-  match /b/{bucket}/o {
-    match /{allPaths=**} {
-      allow read, write: if true;
-    }
-  }
+- errands [collection]
+  - {errandId} [document]
+    - (all Errand interface fields)
+
+- users [collection]
+  - {userId} [document]
+    - (all UserProfile interface fields)
+
+- transactions [collection]
+  - {transactionId} [document]
+    - (all Transaction interface fields)
+
+- notifications [collection]
+  - {notificationId} [document]
+    - (all Notification interface fields)
+
+- conversations [collection]
+  - {conversationId} [document]
+    - (all Conversation interface fields)
+  - {conversationId}/messages [subcollection]
+    - {messageId} [document]
+      - (all Message interface fields)
+
+- prompts [collection]
+  - {promptId} [document]
+    - (all Prompt interface fields)
+
+- reviews [collection]
+  - {reviewId} [document]
+    - (all Review interface fields)
+
+- errandHistory [collection]
+  - {historyId} [document]
+    - (all ErrandHistory interface fields)
+
+- withdrawals [collection]
+  - {withdrawalId} [document]
+    - (all Withdrawal interface fields)
+
+- wallets [collection]
+  - {walletId} [document]
+    - (all Wallet interface fields)
+    - transactions: array (reference to transactions)
+
+- settings [collection]
+  - {settingsId} [document]
+    - (all Settings interface fields)
+
+    guide me on how to set up my firestore database using this... import type { Timestamp, FieldValue } from 'firebase/firestore';
+
+export interface ErrandCategory {
+  id: string;
+  name: string;
+  description: string;
+  icon: string; // URL or path to the icon image
+  createdAt: Timestamp | FieldValue | null;
+  updatedAt: Timestamp | FieldValue | null;
+}
+
+export interface ErrandFilter {
+  category?: string;
+  location?: string;
+  duration?: string;
+  feeRange?: { min: number; max: number };
+  status?: 'open' | 'pending' | 'completed' | 'cancelled';
+  sortBy?: 'createdAt' | 'fee' | 'duration';
+  sortOrder?: 'asc' | 'desc';
+}
+
+export interface Errand {
+  id: string;
+  userId: string;
+  runnerUid: string;
+  title: string;
+  description: string;
+  location: string;
+  duration: string;
+  fee: number;
+  category: string;
+  currency: string;
+  status: 'open' | 'pending' | 'completed' | 'cancelled';
+  geo: { lat: number | null; lng: number | null } | null;
+  createdAt: Timestamp | FieldValue | null;
+  updatedAt: Timestamp | FieldValue | null;
+  completedAt: Timestamp | FieldValue | null;
+  cancelledAt: Timestamp | FieldValue | null;
+  images: string[];
+  likes: string[];
+  bookmarks: string[];
+  clickCount: number;
+  paymentStatus: 'pending' | 'escrow' | 'released';
+  paymentReference: string;
+}
+
+export interface UserProfile {
+  id: string;
+  uid: string;
+  name: string;
+  username: string;
+  email: string;
+  userType: 'both' | 'runner' | 'requester';
+  createdAt: Timestamp | null;
+  followers: string[];
+  followersCount: number;
+  following: string[];
+  followingCount: number;
+  likes: number;
+  bio: string;
+  avatarUrl: string;
+  isVerified: boolean;
+  virtualBalance: number;
+  ratings: number;
+  reviewCount: number;
+  notificationPreferences?: {
+    email: boolean;
+    push: boolean;
+  };
+}
+
+export interface Transaction {
+  id: string;
+  userId: string;
+  type: 'credit' | 'debit' | 'payment' | 'withdrawal';
+  amount: number;
+  currency: string;
+  status: 'pending' | 'completed' | 'failed';
+  errandId: string | null;
+  deduction: number;
+  createdAt: Timestamp | null;
+  description: string;
+}
+
+export interface UserProfileWriteData {
+  name: string;
+  username: string;
+  email: string;
+  userType: 'both' | 'runner' | 'requester';
+  bio?: string;
+  followersCount?: number;
+  followingCount?: number;
+  likes?: number;
+  isVerified?: boolean;
+  virtualBalance?: number;
+  avatarUrl?: string;
+  createdAt?: Timestamp | FieldValue | null;
+}
+
+export interface Notification {
+  id: string;
+  userId: string;
+  type: 'like' | 'message' | 'errand' | 'review' | 'completed' | 'payment' | 'withdrawal' | 'follow';
+  relatedId: string;
+  message: string;
+  read: boolean;
+  createdAt: Timestamp | null;
+}
+
+export interface Message {
+  id: string;
+  senderId: string;
+  content: string;
+  images: string[];
+  createdAt: Timestamp | null;
+  conversationId: string;
+  isRead: boolean;
+}
+
+export interface Conversation {
+  id: string;
+  participants: string[];
+  createdAt: Timestamp | null;
+  lastMessage: string;
+  lastMessageTimestamp: Timestamp | null;
+  readStatus: { [uid: string]: boolean };
+  errandId: string | null;
+}
+
+export interface Prompt {
+  id: string;
+  errandId: string;
+  action: 'cancel' | 'payment' | 'complete';
+  requesterId: string;
+  runnerUid: string; // Changed from runnerId to match Errand
+  requesterConsent: boolean;
+  runnerConsent: boolean;
+  createdAt: Timestamp | null;
+}
+
+export interface Review {
+  id: string;
+  errandId: string;
+  reviewerId: string;
+  reviewedId: string;
+  rating: number;
+  comment: string;
+  createdAt?: Timestamp | FieldValue | null;
+}
+
+export interface ErrandHistory {
+  id: string;
+  errandId: string;
+  userId: string;
+  runnerUid: string;
+  title: string;
+  completedAt: Timestamp | null;
+  cancelledAt: Timestamp | null;
+}
+
+export interface Withdrawal {
+  id: string;
+  userId: string;
+  amount: number;
+  currency: string;
+  status: 'pending' | 'completed' | 'failed';
+  deduction: number;
+  createdAt: Timestamp | null;
+}
+
+export interface Wallet {
+  id: string;
+  userId: string;
+  balance: number;
+  currency: string;
+  transactions: Transaction[];
+  createdAt: Timestamp | null;
+  updatedAt: Timestamp | null;
+}
+
+export interface Settings {
+  id: string;
+  userId: string;
+  notificationPreferences: {
+    email: boolean;
+    push: boolean;
+  };
+  privacySettings: {
+    profileVisibility: 'public' | 'private';
+    errandHistoryVisibility: 'public' | 'private';
+  };
+  createdAt: Timestamp | null;
+  updatedAt: Timestamp | null;
+}
+
+export interface AuthUser {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+  emailVerified: boolean;
+}
+
+export interface AuthContextType {
+  user: AuthUser | null;
+  loading: boolean;
+  error?: Error | null;
+  currentUser: AuthUser | null;
+  authLoading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, displayName?: string) => Promise<void>;
+  logout: () => Promise<void>;
+  updateProfile: (profileData: UserProfileWriteData) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+}
+
+export interface AppContextType {
+  currentUser: AuthUser | null;
+  authLoading: boolean;
+  setCurrentUser: (user: AuthUser | null) => void;
+  setAuthLoading: (loading: boolean) => void;
+  login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, displayName?: string) => Promise<void>;
+  logout: () => Promise<void>;
+  updateProfile: (profileData: UserProfileWriteData) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+}
+
+export interface User{
+  id: string;
+  uid: string;
+  name: string;
+  username: string;
+  email: string;
+  userType: 'both' | 'runner' | 'requester';
+  createdAt: Timestamp | null;
+  followers: string[];
+  followersCount: number;
+  following: string[];
+  followingCount: number;
+  likes: number;
+  bio: string;
+  avatarUrl: string;
+  isVerified: boolean;
+  virtualBalance: number;
+  ratings: number;
+  reviewCount: number;
+  notificationPreferences?: {
+    email: boolean;
+    push: boolean;
+  };
 }

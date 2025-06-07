@@ -1,33 +1,69 @@
-// main.tsx
-import React from "react";
-import ReactDOM from "react-dom/client";
-// Import RouterProvider from react-router-dom for the new routing setup
-import { RouterProvider } from "react-router-dom";
-// Import the AuthProvider from your contexts
-import { AuthProvider } from "./contexts/AuthContext";
-// Import the router instance defined in your router.tsx file
-import router from "./router";
-// Import your global styles
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { HelmetProvider } from 'react-helmet-async';
+import { AuthProvider } from './contexts/AuthContext';
+import { ThemeProvider } from './contexts/ThemeContext';
+import App from './App';
 import './index.css';
+import './styles/theme.css'; // Add this import
 
-// Get the root element from index.html
-const container = document.getElementById("root");
+// Simple ErrorBoundary component
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
 
-// Ensure the container exists before creating the root
-if (!container) {
-  throw new Error("Root element '#root' not found in the document.");
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('ErrorBoundary caught:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="container py-5 text-center">
+          <h1 className="text-danger">Something went wrong</h1>
+          <p className="lead">Please refresh the page or try again later</p>
+          <button
+            className="btn btn-primary"
+            onClick={() => window.location.reload()}
+            aria-label="Reload page"
+          >
+            Refresh Page
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
 }
 
-// Create the React root
-const root = ReactDOM.createRoot(container);
+const rootElement = document.getElementById('root');
 
-// Render the application wrapped in StrictMode, AuthProvider, and RouterProvider
+if (!rootElement) {
+  throw new Error("Failed to find the root element. Make sure you have a <div id='root'></div> in your HTML file.");
+}
+
+const root = ReactDOM.createRoot(rootElement);
+
 root.render(
   <React.StrictMode>
-    {/* AuthProvider wraps the entire application to provide authentication context */}
-    <AuthProvider>
-      {/* RouterProvider renders the component tree based on the router definition */}
-      <RouterProvider router={router} />
-    </AuthProvider>
+    <ErrorBoundary>
+      <HelmetProvider>
+        <AuthProvider>
+          <ThemeProvider>
+            <a href="#main-content" className="skip-link visually-hidden-focusable">
+              Skip to main content
+            </a>
+            <App />
+          </ThemeProvider>
+        </AuthProvider>
+      </HelmetProvider>
+    </ErrorBoundary>
   </React.StrictMode>
 );

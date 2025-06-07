@@ -1,0 +1,43 @@
+[data-bs-theme='dark'] {
+  --bs-body-bg: #1a1a1a;
+  --bs-body-color: #e0e0e0;
+  --bs-card-bg: #2c2c2c;
+  --bs-card-border-color: #444;
+  --bs-btn-bg: #444;
+  --bs-btn-color: #fff;
+  --bs-input-bg: #333;
+  --bs-input-color: #e0e0e0;
+  --bs-input-border-color: #555;
+
+  .alert-info {
+    background-color: #1c2526;
+    color: #a3bffa;
+  }
+
+  .badge.bg-danger {
+    background-color: #dc3545 !important;
+  }
+
+  .form-control {
+    background-color: var(--bs-input-bg);
+    color: var(--bs-input-color);
+    border-color: var(--bs-input-border-color);
+  }
+
+  .input-group .btn-primary {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+  }
+}
+
+[data-bs-theme='light'] {
+  --bs-body-bg: #fff;
+  --bs-body-color: #212529;
+  --bs-card-bg: #fff;
+  --bs-card-border-color: #dee2e6;
+  --bs-btn-bg: #fff;
+  --bs-btn-color: #212529;
+  --bs-input-bg: #fff;
+  --bs-input-color: #212529;
+  --bs-input-border-color: #ced4da;
+}
