@@ -44,25 +44,12 @@ export const registerWithEmail = async (email: string, password: string, display
 
     await updateFirebaseProfile(user, { displayName });
 
-    const profileData: UserProfileWriteData = {
-      name: displayName,
-      username: username.toLowerCase(),
-      searchableUsername: username.toLowerCase(),
-      email,
-      userType: 'both',
-      createdAt: serverTimestamp(),
-      followersCount: 0,
-      followingCount: 0,
-      likes: 0,
-      isVerified: false,
-      walletBalance: 0,
-      avatarUrl: '',
-      bio: '',
-      blockedUsers: [],
-      messageBackgroundUrl: '',
-    };
 
-    await setDoc(doc(db, 'users', user.uid), profileData, { merge: true });
+    await setDoc(doc(db, 'usernames', username.toLowerCase()), {
+      userId: user.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
 
     return user;
   } catch (error) {
@@ -70,6 +57,8 @@ export const registerWithEmail = async (email: string, password: string, display
     throw new Error('Unable to register. Please check your details and try again.');
   }
 };
+
+
 
 export const loginWithEmail = async (email: string, password: string) => {
   try {

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { RecaptchaVerifier, type ConfirmationResult, type AuthError } from 'firebase/auth';
-import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 import { useAuth } from '../contexts/AuthContext';
 import type { UserProfileWriteData } from '../types';
@@ -43,13 +43,12 @@ const Register: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const [showGoogleDetails, setShowGoogleDetails] = useState(false);
-const [googleForm, setGoogleForm] = useState({
-  name: '',
-  username: '',
-  acceptedTerms: false,
-});
-const [googleError, setGoogleError] = useState<string | null>(null);
-
+  const [googleForm, setGoogleForm] = useState({
+    name: '',
+    username: '',
+    acceptedTerms: false,
+  });
+  const [googleError, setGoogleError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && currentUser) {
@@ -67,17 +66,17 @@ const [googleError, setGoogleError] = useState<string | null>(null);
 
   const validateUsername = (username: string) => {
     if (!username.trim()) return 'Username is required';
-    if (isUsernameRestricted(username)) return 'Username is restricted or too short (5+ letters, avoid common words like "agent")';
     if (username.length < 6) return 'Username must be at least 6 characters';
     if (!/^[a-z0-9_]+$/.test(username)) return 'Only lowercase letters, numbers, and underscores';
+    if (isUsernameRestricted(username)) return 'Username is restricted or contains blocked words';
     return null;
   };
 
   const checkUsernameUnique = async (username: string) => {
-    const q = query(collection(db, 'users'), where('username', '==', username));
-    const snapshot = await getDocs(q);
-    return snapshot.empty ? null : 'Username is already taken';
-  };
+  const usernameRef = doc(db, 'usernames', username);
+  const snapshot = await getDoc(usernameRef);
+  return snapshot.exists() ? 'Username is already taken' : null;
+};
 
   const handleError = (err: AuthError, authMethod: string) => {
     let errorMessage = `${authMethod} failed. Please try again.`;
@@ -109,25 +108,17 @@ const [googleError, setGoogleError] = useState<string | null>(null);
     setLoading(prev => ({ ...prev, email: true }));
     setError(null);
 
-    const usernameError = validateUsername(formData.username);
-    if (usernameError) {
-      setError(usernameError);
-      setLoading(prev => ({ ...prev, email: false }));
-      return;
-    }
-
-    const uniqueError = await checkUsernameUnique(formData.username);
-    if (uniqueError) {
-      setError(uniqueError);
-      setLoading(prev => ({ ...prev, email: false }));
-      return;
-    }
-
     try {
+      const usernameError = validateUsername(formData.username);
+      if (usernameError) throw new Error(usernameError);
+
+      const uniqueError = await checkUsernameUnique(formData.username);
+      if (uniqueError) throw new Error(uniqueError);
+
       await register(formData.email, formData.password, formData.name, formData.username);
       navigate('/dashboard');
-    } catch (err) {
-      handleError(err as AuthError, 'Email registration');
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setLoading(prev => ({ ...prev, email: false }));
     }
@@ -139,10 +130,19 @@ const [googleError, setGoogleError] = useState<string | null>(null);
 
 
   try {
+
     await loginWithGoogle();
-    const uid = auth.currentUser?.uid;
-    
+const uid = auth.currentUser?.uid;
 if (!uid) return setGoogleError('User not authenticated');
+
+// Now store username
+const usernameRef = doc(db, 'usernames', googleForm.username);
+await setDoc(usernameRef, {
+  userId: uid,
+  createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp(),
+});
+
 
 const userRef = doc(db, 'users', uid!);
 const snap = await getDoc(userRef);
@@ -163,27 +163,31 @@ const snap = await getDoc(userRef);
 };
 
 
-  const handlePhoneRegister = async (e: React.FormEvent) => {
+const handlePhoneRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(prev => ({ ...prev, phone: true }));
     setError(null);
 
-    if (!otpSent) {
-      const usernameError = validateUsername(formData.username);
-      if (usernameError) {
-        setError(usernameError);
-        setLoading(prev => ({ ...prev, phone: false }));
-        return;
-      }
+    try {
+      // In handlePhoneRegister, after confirmationResult.current.confirm
+const userCredential = await confirmationResult.current!.confirm(formData.otp);
 
-      const uniqueError = await checkUsernameUnique(formData.username);
-      if (uniqueError) {
-        setError(uniqueError);
-        setLoading(prev => ({ ...prev, phone: false }));
-        return;
-      }
 
-      try {
+// Now store username
+const usernameRef = doc(db, 'usernames', phoneData.username);
+await setDoc(usernameRef, {
+  userId: userCredential.user.uid,
+  createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp(),
+});
+
+      if (!otpSent) {
+        const usernameError = validateUsername(formData.username);
+        if (usernameError) throw new Error(usernameError);
+
+        const uniqueError = await checkUsernameUnique(formData.username);
+        if (uniqueError) throw new Error(uniqueError);
+
         if (!recaptchaVerifier.current) {
           recaptchaVerifier.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
             size: 'invisible',
@@ -193,14 +197,7 @@ const snap = await getDoc(userRef);
         confirmationResult.current = result;
         setPhoneData({ name: formData.name, username: formData.username });
         setOtpSent(true);
-      } catch (err) {
-        handleError(err as AuthError, 'Phone registration');
-        recaptchaVerifier.current?.clear();
-        recaptchaVerifier.current = null;
-        setLoading(prev => ({ ...prev, phone: false }));
-      }
-    } else if (confirmationResult.current) {
-      try {
+      } else if (confirmationResult.current) {
         const userCredential = await confirmationResult.current.confirm(formData.otp);
         const userRef = doc(db, 'users', userCredential.user.uid);
         const profileData: UserProfileWriteData = {
@@ -220,16 +217,17 @@ const snap = await getDoc(userRef);
         };
         await setDoc(userRef, profileData, { merge: true });
         navigate('/dashboard');
-      } catch (err) {
-        handleError(err as AuthError, 'Phone OTP verification');
-        recaptchaVerifier.current?.clear();
-        recaptchaVerifier.current = null;
-        setOtpSent(false);
-      } finally {
-        setLoading(prev => ({ ...prev, phone: false }));
       }
+    } catch (err: any) {
+      setError(err.message);
+      recaptchaVerifier.current?.clear();
+      recaptchaVerifier.current = null;
+      setOtpSent(false);
+    } finally {
+      setLoading(prev => ({ ...prev, phone: false }));
     }
   };
+  
 
   if (authLoading) {
     return (
