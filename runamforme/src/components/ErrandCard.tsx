@@ -276,7 +276,8 @@ const ErrandCard: React.FC<ErrandCardProps> = ({
                 variant="link" 
                 size="sm" 
                 className="text-muted p-0"
-                onClick={() => errand.likes?.length > 0 ? setShowLikersModal(true) : null}
+                onClick={() => errand.likes?.length ?? 0
+ > 0 ? setShowLikersModal(true) : null}
                 disabled={!errand.likes || errand.likes.length === 0}
                 aria-label={`${errand.likes?.length || 0} likes`}
               >

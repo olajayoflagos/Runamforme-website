@@ -24,6 +24,9 @@ export interface Errand {
   categoryName: string;
   categoryId: string;
   runnerName: string;
+  likes?: string[]; // <-- Add this line
+  bookmarkedBy?: string[]; // if you use it too
+  [key: string]: any; // optional fallback
   runnerAvatarUrl: string;
   runnerRating: number;
   runnerReviewCount: number;
@@ -39,7 +42,6 @@ export interface Errand {
   runnerUid: string;
   geo: { lat: number; lng: number } | null;
   images: string[];
-  likes: string[];
   bookmarks: string[];
   clickCount: number;
   paymentStatus: string;

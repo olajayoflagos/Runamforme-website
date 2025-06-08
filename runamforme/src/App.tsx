@@ -19,6 +19,7 @@ import NotFoundPage from './pages/NotFoundPage';
 import VerificationPage from './pages/VerificationPage';
 import NotificationsPage from './pages/NotificationsPage';
 import EditErrandPage from './pages/EditErrandPage';
+import AdminPage from './pages/AdminPage';
 import ResetPassword from './pages/ResetPassword';
 import TrackErrandsPage from './pages/TrackErrandsPage';
 import { Suspense } from 'react';
@@ -95,6 +96,14 @@ const App = () => {
                         <Dashboard />
                       </div>
                     } 
+                  />
+                  <Route 
+                    path="/admin" 
+                    element={
+                      <div className="container py-3 py-md-4">
+                        <AdminPage />
+                      </div>
+                    }
                   />
                   <Route 
                     path="/post-errand" 

@@ -78,8 +78,9 @@ const ErrandDetailsPage: React.FC = () => {
         isArchived: errandSnap.data().isArchived ?? false,
       } as Errand;
       setErrand(errandData);
-      setIsLiked(currentUser ? errandData.likes.includes(currentUser.uid) : false);
-      setIsBookmarked(currentUser ? errandData.bookmarks.includes(currentUser.uid) : false);
+setIsLiked(currentUser ? errandData.likes?.includes(currentUser.uid) ?? false : false);
+setIsBookmarked(currentUser ? errandData.bookmarks?.includes(currentUser.uid) ?? false : false);
+
       setHasReviewed(userSnap ? !userSnap.empty : false);
       const clickUpdate = setTimeout(async () => {
         if (errandData.id) {
@@ -505,7 +506,7 @@ const ErrandDetailsPage: React.FC = () => {
                         disabled={actionLoading}
                         aria-label={isLiked ? 'Unlike this errand' : 'Like this errand'}
                       >
-                        {isLiked ? 'Liked' : 'Like'} ({errand.likes.length})
+                        {isLiked ? 'Liked' : 'Like'} ({errand.likes?.length})
                       </button>
 
                       <button

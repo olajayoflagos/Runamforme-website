@@ -2,40 +2,66 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // USERS - Profile, settings, followers
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && (
+        request.auth.uid == userId || 
+        request.resource.data.keys().hasAny(['followers', 'following', 'settings', 'notificationPreferences'])
+      );
     }
 
+    // ERRANDS - Full access by owner, partial access for others
     match /errands/{errandId} {
       allow read: if true;
-      allow create, update, delete: if request.auth != null && request.auth.uid == request.resource.data.userId;
+
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+
+      allow update: if request.auth != null && (
+        request.auth.uid == resource.data.userId || // owner can update
+
+        // others can only update likes/bookmarkedBy
+        (
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['likes', 'bookmarkedBy']) &&
+          resource.data.userId == request.resource.data.userId
+        )
+      );
+
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
+    // REVIEWS
     match /reviews/{reviewId} {
       allow read: if true;
       allow write: if request.auth != null;
     }
 
+    // ERRAND TRACKING HISTORY
     match /errandHistory/{historyId} {
       allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
+    // NOTIFICATIONS
     match /notifications/{notificationId} {
-      allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null;
     }
 
+    // TRANSACTIONS - Deposits, withdrawals
     match /transactions/{transactionId} {
       allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
+    // MESSAGES & CONVERSATIONS
     match /conversations/{conversationId} {
-      allow read, write: if request.auth != null && request.auth.uid in resource.data.participants;
+      allow read, write: if request.auth != null;
 
       match /messages/{messageId} {
-        allow read, write: if request.auth != null && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        allow read, write: if request.auth != null;
       }
     }
 
+    // FALLBACK FOR SEARCH-RELATED ACCESS OR MISC SAFE READS
     match /{document=**} {
       allow read: if request.auth != null;
     }

@@ -230,11 +230,11 @@ const OpenErrandsList: React.FC<OpenErrandsListProps> = ({ userId }) => {
                   <Button
                     variant="link"
                     className="p-0 text-muted"
-                    onClick={() => handleLike(errand.id, currentUser?.uid ? errand.likes.includes(currentUser.uid) : false)}
+                    onClick={() => handleLike(errand.id, currentUser?.uid ? errand.likes?.includes(currentUser.uid) ??  false: true)}
                     disabled={!currentUser?.uid}
-                    aria-label={currentUser?.uid && errand.likes.includes(currentUser.uid) ? `Unlike ${errand.title || 'errand'}` : `Like ${errand.title || 'errand'}`}
+                    aria-label={currentUser?.uid && errand.likes?.includes(currentUser.uid) ? `Unlike ${errand.title || 'errand'}` : `Like ${errand.title || 'errand'}`}
                   >
-                    {errand.likes.length} {currentUser?.uid && errand.likes.includes(currentUser.uid) ? 'Unlike' : 'Like'}
+                    {errand.likes?.length} {currentUser?.uid && errand.likes?.includes(currentUser.uid) ? 'Unlike' : 'Like'}
                   </Button>
                 </Card.Text>
                 <div className="mt-auto d-flex flex-column flex-sm-row gap-2">

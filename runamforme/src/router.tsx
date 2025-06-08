@@ -4,7 +4,14 @@ import { ThemeProvider } from './contexts/ThemeContext'; // Add this import
 import AppLayout from './components/AppLayout';
 import ProtectedRoute from './routes/ProtectedRoutes';
 import { Suspense, lazy } from 'react';
+import { useAuth } from './contexts/AuthContext';
 import LoadingSpinner from './components/LoadingSpinner';
+import { Navigate } from 'react-router-dom';
+
+
+const { currentUser } = useAuth();
+const ADMIN_UID = 'o7gt0mO0ihXiBAJKwyoCB2HYe8v2';
+
 
 // Lazy-loaded page components
 const Home = lazy(() => import('./pages/Home')
@@ -64,6 +71,9 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword')
 const EditErrandPage = lazy(() => import('./pages/EditErrandPage')
   .then(module => ({ default: module.default }))
   .catch(() => ({ default: () => <div>Error loading Edit Errand Page</div> })));
+const AdminPage = lazy(() => import('./pages/AdminPage')
+  .then(module => ({ default: module.default }))
+  .catch(() => ({ default: () => <div>Error loading Admin Page</div> })));
 
 
 const AppRouter = () => {
@@ -95,10 +105,12 @@ const AppRouter = () => {
                   <Route path="/edit-profile" element={<EditProfilePage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                   <Route path="/messages" element={<MessagesPage />} />
+                  
                   <Route path="/track-errands" element={<TrackErrandsPage />} />
                   <Route path="/messages/:conversationId" element={<MessagesPage />} />
                   <Route path="/notifications" element={<NotificationsPage />} />
                   <Route path="/edit-errand/:id" element={<EditErrandPage />} />
+                  <Route path="/admin" element={currentUser?.uid === ADMIN_UID ? <AdminPage /> : <Navigate to="/login" />} />
                   <Route path="/leave-review/:errandId/:runnerId" element={<LeaveReviewPage />} />
                   <Route path="/wallet" element={<WalletPage />} />
                 </Route>
