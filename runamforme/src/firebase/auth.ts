@@ -45,11 +45,19 @@ export const registerWithEmail = async (email: string, password: string, display
     await updateFirebaseProfile(user, { displayName });
 
 
-    await setDoc(doc(db, 'usernames', username.toLowerCase()), {
-      userId: user.uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+await createOrUpdateUserProfile(user, {
+  name: displayName,
+  username: username.toLowerCase(),
+  searchableUsername: username.toLowerCase(),
+});
+
+// After profile is safely created, save username
+await setDoc(doc(db, 'usernames', username.toLowerCase()), {
+  userId: user.uid,
+  createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp(),
+});
+
 
     return user;
   } catch (error) {

@@ -1,4 +1,4 @@
-import { collection, query, where, getDocs, limit, startAfter, type DocumentData } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit, startAfter, type DocumentData, orderBy } from 'firebase/firestore';
 import { db } from './config';
 import { formatErrand } from './firestore';
 import type { Errand } from '../types';
@@ -11,10 +11,12 @@ export async function getUserErrands(
   try {
     const { limit: limitCount = 10, startAfter: startAfterDoc } = options;
     const field = filter === 'completed' ? 'runnerUid' : 'userId';
+
     let q = query(
       collection(db, 'errands'),
       where(field, '==', userId),
       where('isArchived', '==', false),
+      orderBy('createdAt', 'desc'), // 🔥 Required for consistent pagination
       limit(limitCount)
     );
 

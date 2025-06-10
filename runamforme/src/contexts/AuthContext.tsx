@@ -64,12 +64,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     setError(null);
     try {
-      await registerWithEmail(email, password, displayName, username);
-      const user = auth.currentUser;
-      if (user) {
-        await sendEmailVerification(user);
-        setCurrentUser({ ...user, displayName } as User);
-      }
+await registerWithEmail(email, password, displayName, username);
+
+// Re-fetch updated current user after registration
+const user = auth.currentUser;
+
+if (user) {
+  await sendEmailVerification(user);
+  setCurrentUser(user);
+}
+
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Registration failed');
       throw error;
@@ -133,18 +137,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const loginWithPhoneAuth = useCallback(async (phoneNumber: string, recaptchaVerifier: any) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await loginWithPhone(phoneNumber, recaptchaVerifier, '', '');
-      return result.confirmationResult;
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Phone login failed');
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  setLoading(true);
+  setError(null);
+  try {
+    const { confirmationResult } = await loginWithPhone(phoneNumber, recaptchaVerifier, '', '');
+    return confirmationResult;
+  } catch (error) {
+    setError(error instanceof Error ? error.message : 'Phone login failed');
+    throw error;
+  } finally {
+    setLoading(false);
+  }
+}, []);
+
 
   const loginAnonymouslyAuth = useCallback(async () => {
     setLoading(true);

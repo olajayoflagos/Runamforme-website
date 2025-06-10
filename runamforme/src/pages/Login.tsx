@@ -167,26 +167,38 @@ navigate('/dashboard');
           return;
         }
         const userCredential = await confirmationResult.current.confirm(formData.otp);
-        const userRef = doc(db, 'users', userCredential.user.uid);
-        const userSnap = await getDoc(userRef);
-        if (!userSnap.exists()) {
-          const profileData: UserProfileWriteData = {
-            name: 'New User',
-            username: formData.username,
-            searchableUsername: formData.username.toLowerCase(),
-            email: '',
-            userType: 'both',
-            createdAt: serverTimestamp(),
-            followersCount: 0,
-            followingCount: 0,
-            likes: 0,
-            bio: '',
-            isVerified: false,
-            walletBalance: 0,
-            avatarUrl: '',
-          };
-          await setDoc(userRef, profileData);
-        }
+       const userRef = doc(db, 'users', userCredential.user.uid);
+const userSnap = await getDoc(userRef);
+
+if (!userSnap.exists()) {
+  const profileData: UserProfileWriteData = {
+    name: 'New User',
+    username: formData.username,
+    searchableUsername: formData.username.toLowerCase(),
+    email: '',
+    userType: 'both',
+    createdAt: serverTimestamp(),
+    followersCount: 0,
+    followingCount: 0,
+    likes: 0,
+    bio: '',
+    isVerified: false,
+    walletBalance: 0,
+    avatarUrl: '',
+  };
+
+  // Save profile to users/{uid}
+  await setDoc(userRef, profileData);
+
+  // Save mapping to usernames/{username}
+  const usernameRef = doc(db, 'usernames', formData.username);
+  await setDoc(usernameRef, {
+    userId: userCredential.user.uid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
         navigate('/dashboard');
       }
     } catch (err) {

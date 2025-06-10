@@ -131,21 +131,21 @@ const Register: React.FC = () => {
 
   try {
 
-    await loginWithGoogle();
+await loginWithGoogle();
 const uid = auth.currentUser?.uid;
 if (!uid) return setGoogleError('User not authenticated');
 
-// Now store username
-const usernameRef = doc(db, 'usernames', googleForm.username);
-await setDoc(usernameRef, {
-  userId: uid,
-  createdAt: serverTimestamp(),
-  updatedAt: serverTimestamp(),
-});
-
-
-const userRef = doc(db, 'users', uid!);
+const userRef = doc(db, 'users', uid);
 const snap = await getDoc(userRef);
+
+// If profile already exists, navigate
+if (snap.exists()) {
+  navigate('/dashboard');
+} else {
+  // Show username + terms form
+  setShowGoogleDetails(true);
+}
+
 
 
     // If profile already exists, navigate
@@ -197,27 +197,36 @@ await setDoc(usernameRef, {
         confirmationResult.current = result;
         setPhoneData({ name: formData.name, username: formData.username });
         setOtpSent(true);
-      } else if (confirmationResult.current) {
-        const userCredential = await confirmationResult.current.confirm(formData.otp);
-        const userRef = doc(db, 'users', userCredential.user.uid);
-        const profileData: UserProfileWriteData = {
-          name: phoneData.name || 'New User',
-          username: phoneData.username,
-          searchableUsername: phoneData.username.toLowerCase(),
-          email: '',
-          userType: 'both',
-          createdAt: serverTimestamp(),
-          followersCount: 0,
-          followingCount: 0,
-          likes: 0,
-          bio: '',
-          isVerified: false,
-          walletBalance: 0,
-          avatarUrl: '',
-        };
-        await setDoc(userRef, profileData, { merge: true });
-        navigate('/dashboard');
-      }
+} else if (confirmationResult.current) {
+  const userCredential = await confirmationResult.current.confirm(formData.otp);
+
+  const usernameRef = doc(db, 'usernames', phoneData.username);
+  await setDoc(usernameRef, {
+    userId: userCredential.user.uid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  const userRef = doc(db, 'users', userCredential.user.uid);
+  const profileData: UserProfileWriteData = {
+    name: phoneData.name || 'New User',
+    username: phoneData.username,
+    searchableUsername: phoneData.username.toLowerCase(),
+    email: '',
+    userType: 'both',
+    createdAt: serverTimestamp(),
+    followersCount: 0,
+    followingCount: 0,
+    likes: 0,
+    bio: '',
+    isVerified: false,
+    walletBalance: 0,
+    avatarUrl: '',
+  };
+  await setDoc(userRef, profileData, { merge: true });
+  navigate('/dashboard');
+}
+
     } catch (err: any) {
       setError(err.message);
       recaptchaVerifier.current?.clear();
@@ -489,8 +498,17 @@ await setDoc(usernameRef, {
           walletBalance: 0,
           avatarUrl: auth.currentUser?.photoURL || '',
         };
-        await setDoc(userRef, profileData);
-        navigate('/dashboard');
+await setDoc(userRef, profileData, { merge: true });
+
+const usernameRef = doc(db, 'usernames', username);
+await setDoc(usernameRef, {
+  userId: uid,
+  createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp(),
+});
+
+navigate('/dashboard');
+
       } catch (err) {
         console.error('Google profile creation failed:', err);
         setGoogleError('Failed to save profile. Please try again.');
